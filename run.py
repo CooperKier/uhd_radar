@@ -124,15 +124,50 @@ class RadarProcessRunner():
     """
     def run(self):
         if not self.setup_complete:
-            raise Exception("Must call setup() before calling run(). If setup() does not complete successfully, you cannot call run().")
-        
-        self.gpspipe_process = subprocess.Popen(["/usr/bin/gpspipe", "--json", "-uu", "--output", "gpspipe_stdout.log"])
-        self.gpxlogger_process = subprocess.Popen(["/usr/bin/gpxlogger", "--reconnect", "-m2", "-f", "track.gpx", "-e", "sockets"])
+            raise Exception(
+                "Must call setup() before calling run(). "
+                "If setup() does not complete successfully, you cannot call run()."
+            )
+
+        try:
+            self.gpspipe_process = subprocess.Popen(
+                ["gpspipe", "--json", "-uu", "--output", "gpspipe_stdout.log"]
+            )
+        except FileNotFoundError:
+            print("Warning: gpspipe not found. Continuing without gpspipe.")
+            self.gpspipe_process = None
+
+        try:
+            self.gpxlogger_process = subprocess.Popen(
+                ["gpxlogger", "--reconnect", "-m2", "-f", "track.gpx", "-e", "sockets"]
+            )
+        except FileNotFoundError:
+            print("Warning: gpxlogger not found. Continuing without gpxlogger.")
+            self.gpxlogger_process = None
+
         time.sleep(5)
-        self.uhd_process = subprocess.Popen(["./radar", self.yaml_filename], stdout=subprocess.PIPE, bufsize=1, close_fds=True, text=True, cwd="sdr/build")
-        self.uhd_output_reader_thread = threading.Thread(target=self.process_usrp_output, args=(self.uhd_process.stdout, open('uhd_stdout.log', 'w'), self.output_to_stdout))
-        self.uhd_output_reader_thread.daemon = True # thread dies with the program
+
+        self.uhd_process = subprocess.Popen(
+            ["./radar", self.yaml_filename],
+            stdout=subprocess.PIPE,
+            bufsize=1,
+            close_fds=True,
+            text=True,
+            cwd="sdr/build"
+        )
+
+        self.uhd_output_reader_thread = threading.Thread(
+            target=self.process_usrp_output,
+            args=(
+                self.uhd_process.stdout,
+                open("uhd_stdout.log", "w"),
+                self.output_to_stdout
+            )
+        )
+
+        self.uhd_output_reader_thread.daemon = True
         self.uhd_output_reader_thread.start()
+
         self.is_running = True
 
     """
