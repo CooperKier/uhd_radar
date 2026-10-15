@@ -62,6 +62,11 @@ void Sdr::loadConfigFromYaml(const string& kYamlFile) {
   rx_ant = rf1["rx_ant"].as<string>();
 
   transmit = rf0["transmit"].as<bool>(true); // True if transmission enabled
+  receive  = rf0["receive"].as<bool>(true);  // True if reception enabled
+
+  if (!transmit && !receive) {
+    throw std::runtime_error("Both transmit and receive are disabled; nothing to do.");
+  }
 
 /**
 * Sanity checks for configuration parameters
@@ -71,15 +76,15 @@ void Sdr::loadConfigFromYaml(const string& kYamlFile) {
 *
 */
 
-  if (tx_rate != rx_rate){
-    cout << "WARNING: TX sample rate does not match RX sample rate.\n";
+  if (transmit && receive && tx_rate != rx_rate) {
+  cout << "WARNING: TX sample rate does not match RX sample rate.\n";
   }
-  if (config["GENERATE"]["sample_rate"].as<double>() != tx_rate){
+  if (transmit && config["GENERATE"]["sample_rate"].as<double>() != tx_rate) {
     cout << "WARNING: TX sample rate does not match sample rate of generated chirp.\n";
   }
-  if (bw < config["GENERATE"]["chirp_bandwidth"].as<double>() && bw != 0){
+  if (receive && bw < config["GENERATE"]["chirp_bandwidth"].as<double>() && bw != 0) {
     cout << "WARNING: RX bandwidth is narrower than the chirp bandwidth.\n";
-  }
+}
 }
 
 /**
@@ -124,9 +129,11 @@ void Sdr::setupUsrp(){
   // always select the subdevice first, the channel mapping affects the
   // other settings
   if (transmit) {
-  usrp->set_tx_subdev_spec(subdev);
+    usrp->set_tx_subdev_spec(subdev);
   }
-  usrp->set_rx_subdev_spec(subdev);
+  if (receive) {
+    usrp->set_rx_subdev_spec(subdev);
+  }
 
   // set master clock rate
   usrp->set_master_clock_rate(clk_rate);
@@ -245,21 +252,23 @@ void Sdr::checkAndSetTime(){
  * If any channel number is invalid, throws a runtime error.
  */
 void Sdr::detectChannels(){
-  boost::split(tx_channel_strings, tx_channels, boost::is_any_of("\"',"));
-  for (size_t ch = 0; ch < tx_channel_strings.size(); ch++) {
-    size_t chan = stoi(tx_channel_strings[ch]);
-    if (chan >= usrp->get_tx_num_channels()) {
-      throw std::runtime_error("Invalid TX channel(s) specified.");
-    } else
-      tx_channel_nums.push_back(stoi(tx_channel_strings[ch]));
+  if (transmit) {
+    boost::split(tx_channel_strings, tx_channels, boost::is_any_of("\"',"));
+    for (size_t ch = 0; ch < tx_channel_strings.size(); ch++) {
+      size_t chan = stoi(tx_channel_strings[ch]);
+      if (chan >= usrp->get_tx_num_channels())
+        throw std::runtime_error("Invalid TX channel(s) specified.");
+      tx_channel_nums.push_back(chan);
+    }
   }
-  boost::split(rx_channel_strings, rx_channels, boost::is_any_of("\"',"));
-  for (size_t ch = 0; ch < rx_channel_strings.size(); ch++) {
-    size_t chan = stoi(rx_channel_strings[ch]);
-    if (chan >= usrp->get_rx_num_channels()) {
-      throw std::runtime_error("Invalid RX channel(s) specified.");
-    } else
-      rx_channel_nums.push_back(stoi(rx_channel_strings[ch]));
+  if (receive) {
+    boost::split(rx_channel_strings, rx_channels, boost::is_any_of("\"',"));
+    for (size_t ch = 0; ch < rx_channel_strings.size(); ch++) {
+      size_t chan = stoi(rx_channel_strings[ch]);
+      if (chan >= usrp->get_rx_num_channels())
+        throw std::runtime_error("Invalid RX channel(s) specified.");
+      rx_channel_nums.push_back(chan);
+    }
   }
 }
 /*** @brief Sets the RF parameters for the USRP device
@@ -273,19 +282,18 @@ void Sdr::detectChannels(){
 */
 
 void Sdr::setRFParams(){
- // set the RF parameters based on 1 or 2 channel operation
-   if (tx_channel_nums.size() == 1) {
+  size_t n_ch = transmit ? tx_channel_nums.size() : rx_channel_nums.size();
+
+  if (n_ch == 1) {
     set_rf_params_single(usrp, rf0, rx_channel_nums, tx_channel_nums);
-  } else if (tx_channel_nums.size() == 2) {
-    if (!transmit) {
-      throw std::runtime_error("Non-transmit mode not supported by set_rf_params_multi");
+  } else if (n_ch == 2) {
+    if (!transmit || !receive) {
+      throw std::runtime_error("Single-direction mode not supported by set_rf_params_multi");
     }
     set_rf_params_multi(usrp, rf0, rf1, rx_channel_nums, tx_channel_nums);
   } else {
     throw std::runtime_error("Number of channels requested not supported");
   }
-
-  // allow for some setup time
   this_thread::sleep_for(chrono::seconds(1));
 }
 
@@ -315,17 +323,19 @@ void Sdr::refLoLockDetect(){
     }
   }
 
-  for (size_t ch = 0; ch < rx_channel_nums.size(); ch++) {
-    // Check LO locked
-    rx_sensor_names = usrp->get_rx_sensor_names(ch);
-    if (find(rx_sensor_names.begin(), rx_sensor_names.end(), "lo_locked") != rx_sensor_names.end())
-    {
-      sensor_value_t lo_locked = usrp->get_rx_sensor("lo_locked", ch);
-      cout << boost::format("Checking RX: %s ...") % lo_locked.to_pp_string()
-           << endl;
-      UHD_ASSERT_THROW(lo_locked.to_bool());
+  if (receive) {
+    for (size_t ch = 0; ch < rx_channel_nums.size(); ch++) {
+      // Check LO locked
+      rx_sensor_names = usrp->get_rx_sensor_names(ch);
+      if (find(rx_sensor_names.begin(), rx_sensor_names.end(), "lo_locked") != rx_sensor_names.end())
+      {
+        sensor_value_t lo_locked = usrp->get_rx_sensor("lo_locked", ch);
+        cout << boost::format("Checking RX: %s ...") % lo_locked.to_pp_string()
+            << endl;
+        UHD_ASSERT_THROW(lo_locked.to_bool());
+      }
     }
-  }
+  } 
 }
 /*** @brief Sets up GPIO pins for the USRP device
  * 
@@ -394,12 +404,10 @@ void Sdr::setupTx(){
  * received in a single call.
  */
 void Sdr::setupRx(){
-   stream_args_t rx_stream_args(cpu_format, otw_format);
-
-  // rx streamer
+  if (!receive) return;
+  stream_args_t rx_stream_args(cpu_format, otw_format);
   rx_stream_args.channels = rx_channel_nums;
   rx_stream = usrp->get_rx_stream(rx_stream_args);
-
   cout << "INFO: rx_stream get_max_num_samps: " << rx_stream->get_max_num_samps() << endl;
 }
 
@@ -434,6 +442,7 @@ double Sdr::getBw() const {return bw;}
 string Sdr::getRxAnt() const {return rx_ant;}
 string Sdr::getTxAnt() const {return tx_ant;}
 bool Sdr::getTransmit() const {return transmit;}
+bool Sdr::getReceive() const {return receive;}
 
 // USRP
 usrp::multi_usrp::sptr Sdr::getUsrp() const {return usrp;}

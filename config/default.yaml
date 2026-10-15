@@ -19,9 +19,9 @@ GENERATE:
     chirp_length: &chirp_len 20e-6       # [s] Chirp length without zero padding
     pulse_length: &pulse_len 20e-6       # [s] Total pulse length (chirp +
                                          #   symmetric zero padding)    
-    out_file: &ch_sent "chirp.bin"  # The name of the output binary file
+    out_file: &ch_sent "data/chirp.bin"  # The name of the output binary file
                                          #   containing the pulse samples
-    show_plot: False                     # Display a time-domain plot of the
+    show_plot: True                    # Display a time-domain plot of the
                                          #   generated chirp
 
 ### DEVICE CONNECTION AND DATA TRANSFER
@@ -75,8 +75,9 @@ RF0:
     bw: 56e6                             # [Hz] Configurable filter bandwidth
     tx_ant: "TX/RX"                      # Port to be used for TX
     rx_ant: "RX2"                        # port to be used for RX
-    transmit: true                       # "true" (or not set) for normal operation,
-                                         #   set to "false" to completely disable transmit
+    transmit: true                       # "true" (or not set) for normal operation,   
+    receive: true                        # "true" (or not set) for normal operation,
+                                       
     tuning_args: ""                      # Set int_n or fractional tuning args,
                                          #   leave as "" to do nothing (only
                                          #   supported on some SDRs)
@@ -92,8 +93,9 @@ RF1:
     bw: 56e6                             # [Hz] Configurable filter bandwidth
     tx_ant: "TX/RX"                      # Port to be used for TX
     rx_ant: "RX2"                        # port to be used for RX
-    transmit: false                      # "true" (or not set) for normal operation,
-                                         #   set to "false" to completely disable transmit
+    transmit: false                      # set to "false" to completely disable transmit
+    receive: false                       # "true" (or not set) for normal operation,
+                                         #   set to "false" to completely disable receive
     tuning_args: ""                      # Set int_n or fractional tuning args,
                                          #   leave as "" to do nothing (only
                                          #   supported on some SDRs)

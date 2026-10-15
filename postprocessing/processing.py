@@ -26,6 +26,11 @@ def load_config(prefix, modifications = {}):
     return config
 
 def load_radar_data(prefix, load_start_seconds=0, max_seconds_to_load=60*100, max_chunk_size_samples=int(2e8), error_behavior=None, debug=False):
+    for suffix in ["_config.yaml", "_config.yml", ".yaml", ".yml", "_rx_samps.bin", ".bin", "_uhd_stdout.log"]:
+        if prefix.endswith(suffix):
+            prefix = prefix[:-len(suffix)]
+            break
+
     rx_samps = prefix + "_rx_samps.bin"
     log_file = prefix + "_uhd_stdout.log"
     
@@ -165,63 +170,134 @@ def stack(radar_data, n):
         radar_data_stacked[:,out_idx] = np.mean(radar_data[:,start_idx:(start_idx+n)], axis=1)
     return radar_data_stacked
 
-def pulse_compress(radar_data, chirp, fs, upsampling=1, zero_sample_idx=0):
+def pulse_compress(radar_data, chirp, fs, upsampling=1, zero_sample_idx=0, mode='full'):
     if upsampling > 1:
-        corr_sig = scipy.signal.resample_poly(corr_sig, upsampling, 1)
+        corr_sig = scipy.signal.resample_poly(chirp, upsampling, 1)
     else:
         corr_sig = chirp
 
     if len(radar_data.shape) == 1: # If 1 dimensional, assume it's a single trace
         radar_data = np.expand_dims(radar_data, axis=1)
 
-    xcorr_results = np.zeros((((np.shape(radar_data)[0]*upsampling)-len(corr_sig))+1, np.shape(radar_data)[1]), dtype=np.csingle)
+    if mode == 'full':
+        n_out = ((np.shape(radar_data)[0] * upsampling) + len(corr_sig)) - 1
+        ref_idx = len(corr_sig) - 1 + int(zero_sample_idx * upsampling)
+    else:
+        n_out = (((np.shape(radar_data)[0] * upsampling) - len(corr_sig)) + 1)
+        ref_idx = int(zero_sample_idx * upsampling)
+
+    xcorr_results = np.zeros((n_out, np.shape(radar_data)[1]), dtype=np.csingle)
     
-    fast_time = np.linspace(0, np.shape(xcorr_results)[0]/(fs*upsampling), np.shape(xcorr_results)[0])
-    fast_time = fast_time - fast_time[zero_sample_idx*upsampling]
+    fast_time = np.linspace(0, n_out / (fs * upsampling), n_out)
+    if 0 <= ref_idx < n_out:
+        fast_time = fast_time - fast_time[ref_idx]
 
     for res_idx in range(np.shape(xcorr_results)[1]):
         stacked = radar_data[:, res_idx]
         if upsampling > 1:
             stacked = scipy.signal.resample_poly(stacked, upsampling, 1)
 
-        xcorr_results[:, res_idx] = scipy.signal.correlate(stacked, corr_sig, mode='valid', method='auto') / np.sum(np.abs(corr_sig)**2)
+        xcorr_results[:, res_idx] = scipy.signal.correlate(stacked, corr_sig, mode=mode, method='auto') / np.sum(np.abs(corr_sig)**2)
      
     return fast_time, xcorr_results
 
 
-# This function plots a TX or RX complex chirp in an Voltage vs. Time (ms) graph
+# This function plots a TX or RX complex chirp in a Voltage vs. Time (us) graph
 # -----
-# signal      - an array of samples to plot (complex)
-# title       - the title of the signal (eg. TX chirp)
-# sample_rate - the sampling rate of the signal
-def plotChirpVsTime (signal, title, sample_rate):
-    "Plot a transmitted or received signal versus time."
-    n_rx_samps = np.shape(signal)[0]
-    rx_time = np.zeros(n_rx_samps)
-    for x in range(n_rx_samps):
-        rx_time[x] = x/sample_rate  
-    rx_time *= 1e6      # Convert from s to us
-        
-    fig, axs = plt.subplots(2)
+# sig               - an array of samples to plot (complex)
+# title             - the title of the signal (eg. TX chirp)
+# sample_rate       - the sampling rate of the signal
+# samples_per_pulse - number of samples in one pulse (optional)
+def plotChirpVsTime (sig=None, title='Chirp', sample_rate=None, signal=None, samples_per_pulse=None, max_samples=None, use_time=None):
+    "Plot a transmitted or received signal versus time (or pulses if samples_per_pulse is provided)."
+    if sig is None:
+        sig = signal
+
+    if samples_per_pulse is not None and samples_per_pulse > 0:
+        return plotChirpVsPulses(sig, title, samples_per_pulse)
+
+    # For chirp plots (or when explicitly requested), plot against physical time in microseconds
+    is_chirp = 'chirp' in title.lower()
+    if use_time is True or (use_time is None and is_chirp and sample_rate is not None):
+        x = (np.arange(len(sig)) / float(sample_rate)) * 1e6
+        x_label = 'Time (us)'
+    elif sample_rate is not None and use_time is not False:
+        x = (np.arange(len(sig)) / float(sample_rate)) * 1e6
+        x_label = 'Time (us)'
+    else:
+        if max_samples is not None and len(sig) > max_samples:
+            sig = sig[:max_samples]
+        x = np.arange(len(sig))
+        x_label = 'Samples'
+
+    fig, axs = plt.subplots(2, 1, sharex=True)
     fig.suptitle(title)
-    axs[0].set(xlabel='Time (us)', ylabel='Real')
-    axs[0].plot(rx_time, np.real(signal))
-    axs[1].set(xlabel='Time (us)', ylabel='Imaginary')
-    axs[1].plot(rx_time, np.imag(signal))
+
+    axs[0].plot(x, np.real(sig))
+    axs[0].set(ylabel='Real')
+    axs[0].grid(True, linestyle='--', alpha=0.5)
+
+    axs[1].plot(x, np.imag(sig))
+    axs[1].set(xlabel=x_label, ylabel='Imaginary')
+    axs[1].grid(True, linestyle='--', alpha=0.5)
+
+    if len(x) > 1:
+        axs[0].set_xlim(0, x[-1])
+        axs[1].set_xlim(0, x[-1])
+
+    axs[0].ticklabel_format(style='plain', useOffset=False, axis='x')
+    axs[1].ticklabel_format(style='plain', useOffset=False, axis='x')
+
+    fig.tight_layout()
+    return fig, axs
+
+# This function plots a TX or RX complex chirp in a Voltage vs. Pulses graph
+# -----
+# signal            - an array of samples to plot (complex)
+# title             - the title of the signal (eg. Received Samples)
+# samples_per_pulse - number of samples in one pulse
+def plotChirpVsPulses (signal, title, samples_per_pulse):
+    "Plot a transmitted or received signal versus pulses."
+    n_rx_samps = np.shape(signal)[0]
+    rx_pulses = np.arange(n_rx_samps) / float(samples_per_pulse)
+        
+    fig, axs = plt.subplots(2, 1, sharex=True)
+    fig.suptitle(title)
+
+    axs[0].plot(rx_pulses, np.real(signal))
+    axs[0].set(ylabel='Real')
+    axs[0].grid(True, linestyle='--', alpha=0.5)
+
+    axs[1].plot(rx_pulses, np.imag(signal))
+    axs[1].set(xlabel='Pulses', ylabel='Imaginary')
+    axs[1].grid(True, linestyle='--', alpha=0.5)
+
+    if len(rx_pulses) > 1:
+        axs[0].set_xlim(0, rx_pulses[-1])
+        axs[1].set_xlim(0, rx_pulses[-1])
+
+    axs[0].ticklabel_format(style='plain', useOffset=False, axis='x')
+    axs[1].ticklabel_format(style='plain', useOffset=False, axis='x')
+
+    fig.tight_layout()
     return fig, axs
 
 # This function plots a TX or RX complex chirp in an Voltage vs. Sample graph.
 # -----
 # signal      - an array of samples to plot (complex)
 # title       - the title of the signal (eg. TX chirp)
-def plotChirpVsSample (signal, title):
+def plotChirpVsSample (signal, title, max_samples=6000):
     "Plot a transmitted or received signal versus sample."        
+    if max_samples is not None and len(signal) > max_samples:
+        signal = signal[:max_samples]
     fig, axs = plt.subplots(2)
     fig.suptitle(title)
     axs[0].set(xlabel='Sample', ylabel='Real Voltage')
     axs[0].plot(np.real(signal))
+    axs[0].ticklabel_format(style='plain', useOffset=False, axis='x')
     axs[1].set(xlabel='Sample', ylabel='Imaginary Voltage')
     axs[1].plot(np.imag(signal))
+    axs[1].ticklabel_format(style='plain', useOffset=False, axis='x')
     return
 
 # This function returns the sample number of the direct path peak 

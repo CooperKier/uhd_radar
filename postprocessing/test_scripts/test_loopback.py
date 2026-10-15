@@ -14,12 +14,14 @@ parser.add_argument("yaml_file", nargs='?', default='config/default.yaml',
 
 args = parser.parse_args()
 
+import re, os
 str_arg = str(args.yaml_file)
 print("original string is:", str_arg)
-#This code takes the timestamp from the "data/yyyymmdd_hhmmss_config.yaml" string
-#If your output_dir isn't data/isn't 4 letters long, then edit the two indices below to line up with
-#the timestamp
-timestamp = str_arg[5:20]
+match = re.search(r'(\d{8}_\d{6})', str_arg)
+if match:
+    timestamp = match.group(1)
+else:
+    timestamp = str_arg[5:20]
 print("timestamp is:", timestamp)
 
 # Initialize Constants
@@ -35,10 +37,18 @@ with open(args.yaml_file) as stream:
    sig_speed = rx_params["sig_speed"]
 
    output_dir = config['FILES'].get('output_dir', 'data') 
-   rx_samps = output_dir + "/" + timestamp + "_rx_samps.bin" # Received data to analyze
-   prefix = output_dir + "/" + timestamp # Format neccessary for loading data
+   rx_samps = os.path.join(output_dir, timestamp + "_rx_samps.bin") # Received data to analyze
+   prefix = os.path.join(output_dir, timestamp) # Format neccessary for loading data
+   if not os.path.exists(rx_samps):
+       yaml_dir = os.path.dirname(args.yaml_file)
+       candidate = os.path.join(yaml_dir, timestamp + "_rx_samps.bin")
+       if os.path.exists(candidate):
+           rx_samps = candidate
+           prefix = os.path.join(yaml_dir, timestamp)
 
    rx_sig = pr.extractSig(rx_samps)
+   if not os.path.exists(orig_ch) and os.path.exists(os.path.join(output_dir, orig_ch)):
+       orig_ch = os.path.join(output_dir, orig_ch)
    tx_sig = pr.extractSig(orig_ch)
    print("Loaded data")
 

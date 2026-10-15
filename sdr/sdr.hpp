@@ -43,6 +43,7 @@ class Sdr {
     string getRxAnt() const;
     string getTxAnt() const;
     bool getTransmit() const;
+    bool getReceive() const;
 
     // USRP
     usrp::multi_usrp::sptr getUsrp() const;
@@ -100,6 +101,7 @@ class Sdr {
     string rx_ant;  // Port to be used for RX
     string tx_ant;  // Port to be used for TX
     bool transmit;  // "true" (or not set) for normal operation, set to "false" to completely disable transmit
+    bool receive;   // "true" (or not set) for normal operation, set to "false" to completely disable receive
 
     // USRP
     usrp::multi_usrp::sptr usrp;

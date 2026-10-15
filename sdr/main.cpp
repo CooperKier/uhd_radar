@@ -90,9 +90,6 @@ void handleRxBuffer(size_t n_samps_in_rx_buff, rx_metadata_t& rx_md, Chirp& chir
  * @brief Writes received RX data to file if enough pulses have been received
  * 
  * Checks if the number of pulses received is enough to write a full sample_sum to the file, only if enough error-free pulses have been received.
- * @param pulses_received Total number of pulses received
- * @param error_count Total number of errors encountered
- * @param last_pulse_num_written Last pulse number written to the file
  * @param chirp Chirp object containing parameters for the chirp
  * @param sample_sum Vector containing the sum of error-free RX pulses
  * @param outfile Output file stream to write the RX data
@@ -127,7 +124,6 @@ bool checkForFullSampleSum(Chirp& chirp, vector<complex<float>>& sample_sum, ofs
  * @param outfile Output file stream to write the RX data
  * @param current_filename Current filename for the output file
  * @param save_file_index Index of the current file being saved
- * @param last_pulse_num_written Last pulse number written to the file
  */
 void splitOutputFiles(Chirp& chirp, ofstream& outfile, string& current_filename, int& save_file_index) {
   if ( (chirp.getMaxChirpsPerFile() > 0) && (int(last_pulse_num_written / chirp.getMaxChirpsPerFile()) > save_file_index)) {
@@ -157,9 +153,6 @@ void splitOutputFiles(Chirp& chirp, ofstream& outfile, string& current_filename,
  * @param gps_stream GPS stream descriptor for closing the GPS file
  * @param outfile Output file stream to close
  * @param current_filename Current filename for the output file
- * @param error_count Total number of errors encountered during the RX process
- * @param last_pulse_num_written Last pulse number written to the file
- * @param pulses_received Total number of pulses received during the RX process
  * @param transmit_thread Thread group for the transmit worker
  */
 void wrapUp(boost::asio::posix::stream_descriptor& gps_stream, ofstream& outfile, string& current_filename, boost::thread_group& transmit_thread) {
@@ -331,17 +324,21 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
   cout << "INFO: Number of TX samples: " << num_tx_samps << endl;  //needs to be after chirp and sdr object are both made
   cout << "INFO: Number of RX samples: " << num_rx_samps << endl << endl;  //needs to be after chirp and sdr object are both made
 
+  if (!sdr.getTransmit()) {
+    cout << "WARNING: Transmit disabled by configuration file!" << endl;
+  }
+  if (!sdr.getReceive()) {
+    cout << "WARNING: Receive disabled by configuration file! (TX-only mode)" << endl;
+  }
  
   // update the offset time for start of streaming to be offset from the current usrp time
   chirp.setTimeOffset(chirp.getTimeOffset() + time_spec_t(sdr.getUsrp()->get_time_now()).get_real_secs());  //needs to be after chirp and sdr object are both made
 
   /*** SPAWN THE TX THREAD ***/
+  // Note: the stream pointers are null when the corresponding direction is
+  // disabled; transmit_worker checks sdr.getTransmit()/getReceive() before use.
   boost::thread_group transmit_thread;
   transmit_thread.create_thread(boost::bind(&transmit_worker, sdr.getTxStream(), sdr.getRxStream(), boost::ref(chirp), boost::ref(sdr)));
-  
-  if (!sdr.getTransmit()) {
-    cout << "WARNING: Transmit disabled by configuration file!" << endl;
-  }
 
   //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -368,7 +365,14 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
 
   ioservice.run();
 
-  
+  /*** TX-ONLY MODE: no RX loop, no RX output file ***/
+  if (!sdr.getReceive()) {
+    cout << "[TX] TX-only mode. Waiting for transmit thread (Ctrl-C to stop)." << endl;
+    transmit_thread.join_all();
+    gps_stream.close();
+    cout << "[TX] transmit_thread.join_all() complete." << endl << endl;
+    return EXIT_SUCCESS;
+  }
 
   // open file for writing rx samples
   ofstream outfile;
@@ -550,25 +554,20 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
 
 /*
  * TRANSMIT_WORKER
+ *
+ * Schedules timed TX bursts and/or timed RX stream commands.
+ *  - TX enabled:  reads chirp file and sends each chirp.
+ *  - RX enabled:  issues a timed RX stream command per chirp, and throttles
+ *                 on the RX loop's progress (pulses_received).
+ *  - RX disabled: throttles against USRP device time instead, since there is
+ *                 no RX loop to update pulses_received.
  */
 
 void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream, Chirp& chirp, Sdr& sdr){
   set_thread_priority_safe(1.0, true);
 
-  // open file to stream from
-  ifstream infile("../../" + output_dir + "/" + chirp_loc, ifstream::binary);
-
-  if (!infile.is_open())
-  {
-    cout << endl
-         << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
-    cout << "ERROR! Failed to open chirp.bin input file" << endl;
-    cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl
-         << endl;
-    exit(1);
-  }
-
-  // Transmit buffers
+  const bool do_tx = sdr.getTransmit();
+  const bool do_rx = sdr.getReceive();
 
   if (sdr.getCpuFormat() != "fc32") {
     cout << "Only cpu_format 'fc32' is supported for now." << endl;
@@ -579,11 +578,28 @@ void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream,
     exit(1);
   }
 
+  // Transmit buffers
   vector<std::complex<float>> tx_buff(num_tx_samps); // Ready-to-transmit samples
   vector<std::complex<float>> chirp_unmodulated(num_tx_samps); // Chirp samples before any phase modulation
 
-  infile.read((char *)&chirp_unmodulated.front(), num_tx_samps * convert::get_bytes_per_item(sdr.getCpuFormat()));
-  tx_buff = chirp_unmodulated;
+  // open file to stream from (only needed when transmitting)
+  ifstream infile;
+  if (do_tx) {
+    infile.open("../../" + output_dir + "/" + chirp_loc, ifstream::binary);
+
+    if (!infile.is_open())
+    {
+      cout << endl
+           << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
+      cout << "ERROR! Failed to open chirp.bin input file" << endl;
+      cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl
+           << endl;
+      exit(1);
+    }
+
+    infile.read((char *)&chirp_unmodulated.front(), num_tx_samps * convert::get_bytes_per_item(sdr.getCpuFormat()));
+    tx_buff = chirp_unmodulated;
+  }
 
   // Transmit metadata structure
   tx_metadata_t tx_md;
@@ -596,7 +612,6 @@ void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream,
   stream_cmd.num_samps = num_rx_samps;
   stream_cmd.stream_now = false;
 
-  int chirps_sent = 0;
   double rx_time;
   size_t n_samp_tx;
 
@@ -606,7 +621,7 @@ void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream,
   while ((chirp.getNumPulses() < 0) || ((pulses_scheduled - error_count) < chirp.getNumPulses()))
   {
     // Setup next chirp for modulation
-    if (chirp.getPhaseDither()) {
+    if (do_tx && chirp.getPhaseDither()) {
       transform(chirp_unmodulated.begin(), chirp_unmodulated.end(), tx_buff.begin(), [scale = polar((float) 1.0, get_next_phase(true))](const complex<float>& x) { return scale * x; });
     }
 
@@ -620,13 +635,18 @@ void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream,
     queue depth is 8 for both the B20x-mini and X310. (And each pulse
     is two commands -- TX and RX.) So if we're following that, then
     we should only schedule 6 pulses ahead.
+
+    This throttle relies on pulses_received, which is only updated by the
+    RX loop, so it is only used when RX is enabled.
     */
-    while ((pulses_scheduled - 6) > pulses_received) { // TODO: hardcoded
-      if (stop_signal_called) {
-        cout << "[TX] stop signal called while scheduler thread waiting -> break" << endl;
-        break;
+    if (do_rx) {
+      while ((pulses_scheduled - 6) > pulses_received) { // TODO: hardcoded
+        if (stop_signal_called) {
+          cout << "[TX] stop signal called while scheduler thread waiting -> break" << endl;
+          break;
+        }
+        boost::this_thread::sleep_for(boost::chrono::nanoseconds(10));
       }
-      boost::this_thread::sleep_for(boost::chrono::nanoseconds(10));
     }
 
     if (error_count > last_error_count) {
@@ -637,17 +657,30 @@ void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream,
       cout_mutex.unlock();
       last_error_count = error_count;
     }
-    // TX
+
+    // Timing for this pulse
     rx_time = chirp.getTimeOffset() + (chirp.getPulseRepInt() * pulses_scheduled); // TODO: How do we track timing
     tx_md.time_spec = time_spec_t(rx_time - chirp.getTxLead());
-    
-    if (sdr.getTransmit()) {
+
+    // TX-only: no RX loop to throttle against, so pace against USRP device time
+    if (!do_rx) {
+      const double lookahead = 6 * chirp.getPulseRepInt();
+      while (!stop_signal_called &&
+             (rx_time - lookahead) > sdr.getUsrp()->get_time_now().get_real_secs()) {
+        boost::this_thread::sleep_for(boost::chrono::milliseconds(1));
+      }
+    }
+
+    // TX
+    if (do_tx) {
       n_samp_tx = tx_stream->send(&tx_buff.front(), num_tx_samps, tx_md, 60); // TODO: Think about timeout
     }
 
     // RX
-    stream_cmd.time_spec = time_spec_t(rx_time);
-    rx_stream->issue_stream_cmd(stream_cmd);
+    if (do_rx) {
+      stream_cmd.time_spec = time_spec_t(rx_time);
+      rx_stream->issue_stream_cmd(stream_cmd);
+    }
 
     //cout << "[TX] Scheduled pulse " << pulses_scheduled << " at " << rx_time << " (n_samp_tx = " << n_samp_tx << ")" << endl;
 
@@ -659,8 +692,10 @@ void transmit_worker(tx_streamer::sptr& tx_stream, rx_streamer::sptr& rx_stream,
     }
   }
 
-  cout << "[TX] Closing file" << endl;
-  infile.close();
+  if (do_tx) {
+    cout << "[TX] Closing file" << endl;
+    infile.close();
+  }
   cout << "[TX] Done." << endl;
 
 }

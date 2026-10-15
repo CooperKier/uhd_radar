@@ -151,7 +151,8 @@ def main(prefix):
     slowtime, sample_rate, rx = load_data(prefix)
     _, chirp = generate_chirp(processing.load_config(prefix))
     #plot_chirp(chirp, sample_rate)
-    stacked = stack(rx, len(rx)) # initial stack to reduce size of rx 
+    #stacked = stack(rx, len(rx)) # initial stack to reduce size of rx 
+    stacked = stack(rx, len(rx[0])) # initial stack to reduce size of rx 
     matched = matched_filter(stacked, chirp)
 
     #Change your coax_length to the length of your cable
