@@ -1,0 +1,18 @@
+name: uhd-b206
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - uhd=4.9.*
+  - libboost=1.88.*
+  - libboost-devel=1.88.*
+  - yaml-cpp=0.8.*
+  - cmake>=3.24,<4
+  - make
+  - cxx-compiler
+  - numpy
+  - scipy
+  - matplotlib
+  - ruamel.yaml>=0.18,<0.20
+  - pytest

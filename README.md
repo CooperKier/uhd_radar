@@ -17,6 +17,8 @@ For detailed documentation, see the "Docs" badge above.
 
 ## Configuring your environment
 
+**For a Raspberry Pi with a B206mini, follow the [B206mini setup guide](docs/raspberry_pi_b206/README.md).** It uses UHD 4.9 and a separate dependency recipe; the older environment files below do not support the B206mini.
+
 The easiest way to make sure you have the right dependencies to run everything here is to use conda. If you're new to conda, there are some notes on setting things up [here](tips/conda.md).
 
 Dependencies for this project are managed through the `environment.yaml` file. You can create a conda environment with everything you need to run this code like this:
