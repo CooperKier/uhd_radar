@@ -1,6 +1,7 @@
 #include "../../sdr/sdr.hpp"
 #include "../../sdr/rf_settings.hpp"
 #include <gtest/gtest.h>
+#include <fstream>
 
 using namespace std;
 
@@ -37,7 +38,7 @@ TEST(loadConfigFromYaml, LoadsDefault){
     EXPECT_EQ(sdr.getOtwFormat(), "sc12");
 
     //GPIO
-    EXPECT_EQ(sdr.getPwrAmpPin(), -3);
+    EXPECT_EQ(sdr.getPwrAmpPin(), -1);
     EXPECT_EQ(sdr.getGpioBank(), "FP0");
     EXPECT_EQ(sdr.getRefOutInt(), -1);
 
@@ -45,8 +46,8 @@ TEST(loadConfigFromYaml, LoadsDefault){
     EXPECT_EQ(sdr.getRxRate(), 56e6);
     EXPECT_EQ(sdr.getTxRate(), 56e6);
     EXPECT_EQ(sdr.getFreq(), 450e6);
-    EXPECT_EQ(sdr.getRxGain(), 10);
-    EXPECT_EQ(sdr.getTxGain(), 10);
+    EXPECT_EQ(sdr.getRxGain(), 36);
+    EXPECT_EQ(sdr.getTxGain(), 65);
     EXPECT_EQ(sdr.getBw(), 56e6);
     EXPECT_EQ(sdr.getTxAnt(), "TX/RX");
     EXPECT_EQ(sdr.getRxAnt(), "RX2");
@@ -63,12 +64,94 @@ TEST(GetterMethods, UntestedInLoadsDefault){
     const string kYamlFile = string(CONFIG_DIR) + "/default.yaml";
     Sdr sdr(kYamlFile);
 
-    EXPECT_EQ(sdr.getAmpGpioMask(), 536870912); // 536870912 in 32-bit binary is 00100000000000000000000000000000
-    EXPECT_EQ(sdr.getAtrMasks(), 536870912);
-    EXPECT_EQ(sdr.getAtrControl(), 536870912);
-    EXPECT_EQ(sdr.getGpioDdr(), 536870912);
+    EXPECT_EQ(sdr.getAmpGpioMask(), 0);
+    EXPECT_EQ(sdr.getAtrMasks(), 0);
+    EXPECT_EQ(sdr.getAtrControl(), 0);
+    EXPECT_EQ(sdr.getGpioDdr(), 0);
 }
 
+/** @brief Exercises configuration loading without a physical USRP. */
+class SdrConfigTest : public ::testing::Test {
+protected:
+    YAML::Node config;
+    boost::filesystem::path filename;
+
+    void SetUp() override {
+        config = YAML::LoadFile(string(CONFIG_DIR) + "/default.yaml");
+        // Break YAML aliases so changes to RF0 cannot also update RF1.
+        config["RF1"] = YAML::Clone(config["RF1"]);
+        filename = boost::filesystem::temp_directory_path() /
+                   boost::filesystem::unique_path("orca-config-%%%%-%%%%.yaml");
+    }
+
+    void TearDown() override { boost::filesystem::remove(filename); }
+
+    void writeConfig() {
+        ofstream file(filename.string());
+        file << config;
+    }
+};
+
+TEST_F(SdrConfigTest, MapsEnabledGpioPin) {
+    config["GPIO"]["pwr_amp_pin"] = 8;
+    writeConfig();
+    Sdr sdr(filename.string());
+    EXPECT_EQ(sdr.getPwrAmpPin(), 6);
+    EXPECT_EQ(sdr.getAmpGpioMask(), uint32_t(1) << 6);
+    EXPECT_EQ(sdr.getAtrMasks(), sdr.getAmpGpioMask());
+    EXPECT_EQ(sdr.getAtrControl(), sdr.getAmpGpioMask());
+    EXPECT_EQ(sdr.getGpioDdr(), sdr.getAmpGpioMask());
+}
+
+TEST_F(SdrConfigTest, RejectsInvalidGpioPins) {
+    for (int pin : {-2, 0, 1, 34}) {
+        config["GPIO"]["pwr_amp_pin"] = pin;
+        writeConfig();
+        EXPECT_THROW(Sdr{filename.string()}, invalid_argument);
+    }
+}
+
+TEST_F(SdrConfigTest, ReadsActiveFrontendInSingleDirectionModes) {
+    for (bool transmit : {false, true}) {
+        config["RF0"]["transmit"] = transmit;
+        config["RF0"]["receive"] = !transmit;
+        config["RF0"]["rx_rate"] = 10e6;
+        config["RF0"]["tx_rate"] = 10e6;
+        config["RF0"]["freq"] = 300e6;
+        config["RF0"]["rx_gain"] = 20;
+        config["RF0"]["tx_gain"] = 30;
+        config["RF0"]["bw"] = 30e6;
+        config["GENERATE"]["sample_rate"] = 10e6;
+        writeConfig();
+        Sdr sdr(filename.string());
+        EXPECT_EQ(sdr.getTransmit(), transmit);
+        EXPECT_EQ(sdr.getReceive(), !transmit);
+        EXPECT_EQ(sdr.getRxRate(), 10e6);
+        EXPECT_EQ(sdr.getTxRate(), 10e6);
+        EXPECT_EQ(sdr.getFreq(), 300e6);
+        EXPECT_EQ(sdr.getRxGain(), 20);
+        EXPECT_EQ(sdr.getTxGain(), 30);
+        EXPECT_EQ(sdr.getBw(), 30e6);
+    }
+}
+
+TEST_F(SdrConfigTest, RejectsMissingEnabledChannelsBeforeAccessingDevice) {
+    YAML::Node rf = config["RF0"];
+    for (bool transmit : {false, true}) {
+        rf["transmit"] = transmit;
+        rf["receive"] = !transmit;
+        EXPECT_THROW(set_rf_params_single(nullptr, rf, {}, {}), std::runtime_error);
+        EXPECT_THROW(set_rf_params_single(nullptr, rf, {0, 1}, {0, 1}), std::runtime_error);
+    }
+}
+
+TEST_F(SdrConfigTest, RejectsBothDirectionsDisabled) {
+    config["RF0"]["transmit"] = false;
+    config["RF0"]["receive"] = false;
+    writeConfig();
+    EXPECT_THROW(Sdr{filename.string()}, std::runtime_error);
+    EXPECT_THROW(set_rf_params_single(nullptr, config["RF0"], {}, {}), std::runtime_error);
+}
 
 //hardware testing for usrp, all run at the very beginning
 
@@ -248,5 +331,9 @@ TEST(setupGpio, checkParams){
     test.revealSetRFParams(sdr);
     test.revealRefLoLockDetect(sdr);
     test.revealSetupGpio(sdr);
-    EXPECT_NE(sdr.getPwrAmpPin(), -1);
+    if (sdr.getPwrAmpPin() == -1) {
+        EXPECT_EQ(sdr.getAmpGpioMask(), 0);
+    } else {
+        EXPECT_NE(sdr.getAmpGpioMask(), 0);
+    }
 }

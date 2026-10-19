@@ -1,6 +1,6 @@
 # This is an example of a YAML configuration file used to set parameters for the
 # ORCA system.
-# This configuration file is meant for the Ettus USRP B205mini-i.
+# This configuration file is meant for the Ettus USRP B206mini.
 
 ### CHIRP AND PULSE PARAMETERS
 GENERATE:
@@ -19,9 +19,9 @@ GENERATE:
     chirp_length: &chirp_len 20e-6       # [s] Chirp length without zero padding
     pulse_length: &pulse_len 20e-6       # [s] Total pulse length (chirp +
                                          #   symmetric zero padding)    
-    out_file: &ch_sent "data/chirp.bin"  # The name of the output binary file
+    out_file: &ch_sent "chirp.bin"       # Relative to FILES.output_dir
                                          #   containing the pulse samples
-    show_plot: True                     # Display a time-domain plot of the
+    show_plot: False                    # Display a time-domain plot of the
                                          #   generated chirp
 
 ### DEVICE CONNECTION AND DATA TRANSFER
@@ -70,8 +70,8 @@ RF0:
     freq: 450e6                          # [Hz] Center Frequency (mixer frequency)
     lo_offset: 15e6                      # [Hz] LO offset
     rx_gain: 36                          # [dB] RX Gain
-    tx_gain: 65                          # [dB] TX Gain - 60.8 is about -10 dBm
-                                         #   output on the b205mini
+    tx_gain: 65                          # [dB] TX Gain; calibrate output power for this device
+                                         #   and frequency before use
     bw: 56e6                             # [Hz] Configurable filter bandwidth
     tx_ant: "TX/RX"                      # Port to be used for TX
     rx_ant: "RX2"                        # port to be used for RX
@@ -88,8 +88,8 @@ RF1:
     freq: 450e6                          # [Hz] Center Frequency (mixer frequency)
     lo_offset: 0e6                       # [Hz] LO offset
     rx_gain: 10                          # [dB] RX Gain
-    tx_gain: 10                          # [dB] TX Gain - 60.8 is about -10 dBm
-                                         #   output on the b205mini
+    tx_gain: 10                          # [dB] TX Gain; calibrate output power for this device
+                                         #   and frequency before use
     bw: 56e6                             # [Hz] Configurable filter bandwidth
     tx_ant: "TX/RX"                      # Port to be used for TX
     rx_ant: "RX2"                        # port to be used for RX

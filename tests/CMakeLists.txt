@@ -40,16 +40,16 @@ target_include_directories(test_chirp PRIVATE ../sdr)
 target_link_libraries(test_chirp
     gtest_main
     Boost::filesystem
-    yaml-cpp
+    yaml-cpp::yaml-cpp
 )
 
 target_compile_definitions(test_sdr PRIVATE CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../config")
 target_include_directories(test_sdr PRIVATE ../sdr)
 target_link_libraries(test_sdr
-    uhd
+    ${UHD_LIBRARIES}
     gtest_main
     Boost::filesystem
-    yaml-cpp
+    yaml-cpp::yaml-cpp
 )
 
 include(GoogleTest)

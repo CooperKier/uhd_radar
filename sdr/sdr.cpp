@@ -39,9 +39,13 @@ void Sdr::loadConfigFromYaml(const string& kYamlFile) {
   YAML::Node gpio_params = config["GPIO"];
   gpio_bank = gpio_params["gpio_bank"].as<string>();
   pwr_amp_pin = gpio_params["pwr_amp_pin"].as<int>();
-  pwr_amp_pin -= 2; // map the specified DB15 pin to the GPIO pin numbering
+  AMP_GPIO_MASK = ATR_MASKS = ATR_CONTROL = GPIO_DDR = 0;
   if (pwr_amp_pin != -1) {
-    AMP_GPIO_MASK = (1 << pwr_amp_pin);
+    if (pwr_amp_pin < 2 || pwr_amp_pin > 33) {
+      throw std::invalid_argument("Power amplifier pin must be -1 or map to a GPIO bit between 0 and 31.");
+    }
+    pwr_amp_pin -= 2; // map the specified DB15 pin to the GPIO pin numbering
+    AMP_GPIO_MASK = (uint32_t(1) << pwr_amp_pin);
     ATR_MASKS = (AMP_GPIO_MASK);
     ATR_CONTROL = (AMP_GPIO_MASK);
     GPIO_DDR = (AMP_GPIO_MASK);
@@ -52,14 +56,14 @@ void Sdr::loadConfigFromYaml(const string& kYamlFile) {
   // RF
   rf0 = config["RF0"];
   rf1 = config["RF1"];
-  rx_rate = rf1["rx_rate"].as<double>();
-  tx_rate = rf1["tx_rate"].as<double>();
-  freq = rf1["freq"].as<double>();
-  rx_gain = rf1["rx_gain"].as<double>();
-  tx_gain = rf1["tx_gain"].as<double>();
-  bw = rf1["bw"].as<double>();
-  tx_ant = rf1["tx_ant"].as<string>();
-  rx_ant = rf1["rx_ant"].as<string>();
+  rx_rate = rf0["rx_rate"].as<double>();
+  tx_rate = rf0["tx_rate"].as<double>();
+  freq = rf0["freq"].as<double>();
+  rx_gain = rf0["rx_gain"].as<double>();
+  tx_gain = rf0["tx_gain"].as<double>();
+  bw = rf0["bw"].as<double>();
+  tx_ant = rf0["tx_ant"].as<string>();
+  rx_ant = rf0["rx_ant"].as<string>();
 
   transmit = rf0["transmit"].as<bool>(true); // True if transmission enabled
   receive  = rf0["receive"].as<bool>(true);  // True if reception enabled
@@ -252,6 +256,10 @@ void Sdr::checkAndSetTime(){
  * If any channel number is invalid, throws a runtime error.
  */
 void Sdr::detectChannels(){
+  tx_channel_strings.clear();
+  tx_channel_nums.clear();
+  rx_channel_strings.clear();
+  rx_channel_nums.clear();
   if (transmit) {
     boost::split(tx_channel_strings, tx_channels, boost::is_any_of("\"',"));
     for (size_t ch = 0; ch < tx_channel_strings.size(); ch++) {

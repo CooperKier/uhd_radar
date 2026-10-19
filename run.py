@@ -46,6 +46,8 @@ class RadarProcessRunner():
         self.file_queue_size = 1
         self.output_file = None
         self.output_file_path = None
+        self.gpspipe_process = None
+        self.gpxlogger_process = None
 
     """
     Manage the stdout of the radar program, including logging it to a file and optionally sending it for additional processing
@@ -93,8 +95,11 @@ class RadarProcessRunner():
         with open(self.yaml_filename) as stream:
             self.config = yaml.load(stream)
 
+        os.makedirs(self.config['FILES'].get('output_dir', 'data'), exist_ok=True)
+        receive = self.config.get('RF0', {}).get('receive', True)
+
         # Verify file save options
-        if (self.config['RUN_MANAGER']['final_save_loc'] is None) and (self.config['RUN_MANAGER']['save_partial_files'] is False) and (self.config['FILES']['max_chirps_per_file'] != -1):
+        if receive and (self.config['RUN_MANAGER']['final_save_loc'] is None) and (self.config['RUN_MANAGER']['save_partial_files'] is False) and (self.config['FILES']['max_chirps_per_file'] != -1):
             print("You must choose to save at least some of your data. In yaml: file_save_loc cannot be empty and save_partial files cannot be false at the same time, unless .")
             exit(1)
 
@@ -191,7 +196,8 @@ class RadarProcessRunner():
         was_force_killed = False
 
         print("Attemping to stop UHD process")
-        self.uhd_process.send_signal(signal.SIGINT)
+        if self.uhd_process.poll() is None:
+            self.uhd_process.send_signal(signal.SIGINT)
         print(f"Waiting up to {timeout} seconds for the process to quit")
         t = time.time()
         try:
@@ -199,28 +205,41 @@ class RadarProcessRunner():
         except subprocess.TimeoutExpired as e:
             print(f"UHD process did not terminate within time limit. Killing...")
             self.uhd_process.kill()
+            self.uhd_process.wait()
             was_force_killed = True
         self.is_running = False
 
-        self.gpspipe_process.kill()
-        self.gpxlogger_process.kill()
+        for process in (self.gpspipe_process, self.gpxlogger_process):
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
 
         self.uhd_output_reader_thread.join()
 
+        if self.uhd_process.returncode != 0:
+            raise RuntimeError(
+                f"Radar exited with status {self.uhd_process.returncode}; "
+                "see uhd_stdout.log. Raw output files have been retained."
+            )
+
+        receive = self.config.get('RF0', {}).get('receive', True)
         # If necessary, concatenate data files into a single file
         alternative_rx_samps_loc = None
-        if (self.config['RUN_MANAGER']['final_save_loc'] is not None) and (self.config['FILES']['max_chirps_per_file'] != -1):
+        if receive and (self.config['RUN_MANAGER']['final_save_loc'] is not None) and (self.config['FILES']['max_chirps_per_file'] != -1):
             print("Calling save_from_queue()")
             self.save_from_queue()
             alternative_rx_samps_loc = self.output_file_path
 
         # Save output
         print("Copying data files...")
-        file_prefix = save_data(self.yaml_filename, alternative_rx_samps_loc=alternative_rx_samps_loc, num_files=self.file_queue_size,
-                                extra_files={"uhd_stdout.log": "uhd_stdout.log",
-                                             "gpspipe_stdout.log": "gpspipe_stdout.log",
-                                             "track.gpx": "track.gpx"
-                                             })
+        extra_files = {"uhd_stdout.log": "uhd_stdout.log"}
+        if self.gpspipe_process is not None and os.path.isfile("gpspipe_stdout.log"):
+            extra_files["gpspipe_stdout.log"] = "gpspipe_stdout.log"
+        if self.gpxlogger_process is not None and os.path.isfile("track.gpx"):
+            extra_files["track.gpx"] = "track.gpx"
+        file_prefix = save_data(self.yaml_filename, alternative_rx_samps_loc=alternative_rx_samps_loc,
+                                num_files=self.file_queue_size, extra_files=extra_files)
         print("Finished copying data.")
 
         self.output_file = None
