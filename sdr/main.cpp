@@ -369,6 +369,28 @@ bool runScheduledTx(Sdr& sdr, Chirp& chirp, double target_utc) {
   return true;
 }
 
+/** @brief Preserve sample counts and UHD metadata before rejecting the first RX window. */
+void reportScheduledRxPacket(const rx_metadata_t& md, size_t received,
+                             size_t expected, double target, double rate) {
+  std::ostringstream report;
+  report << std::setprecision(17)
+         << "[SCHEDULE] First RX diagnostics: received_samples=" << received
+         << "; expected_samples=" << expected
+         << "; target_device_time=" << target
+         << "; configured_rx_rate=" << rate
+         << "; timestamp_present=" << md.has_time_spec;
+  if (md.has_time_spec) {
+    double actual = md.time_spec.get_real_secs();
+    report << "; actual_device_time=" << actual
+           << "; timestamp_delta_seconds=" << actual - target
+           << "; timestamp_delta_samples=" << (actual - target) * rate;
+  }
+  report << "; UHD error=" << md.strerror() << '\n'
+         << "[SCHEDULE] First RX metadata:\n" << md.to_pp_string(false);
+  std::lock_guard<std::mutex> lock(cout_mutex);
+  cout << report.str() << endl;
+}
+
 /*
  * UHD_SAFE_MAIN
  */
@@ -559,7 +581,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
   float inversion_phase; // Store phase to use for phase inversion of this chirp
   
   //Creating GPS log & vars
-  printf("Starting GPS code...\n");
+  printf(scheduled_rx ? "Scheduled RX: serial GPS disabled.\n" : "Starting GPS code...\n");
   using namespace boost::asio;
 
   io_context io;
@@ -610,6 +632,8 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     n_samps_in_rx_buff = sdr.getRxStream()->recv(buffs, num_rx_samps, rx_md, 60.0, false); // TODO: Think about timeout
 
     if (scheduled_rx && pulses_received == 0) {
+      reportScheduledRxPacket(rx_md, n_samps_in_rx_buff, num_rx_samps,
+                              chirp.getTimeOffset(), sdr.getRxRate());
       bool valid = rx_md.error_code == rx_metadata_t::ERROR_CODE_NONE &&
                    rx_md.has_time_spec && n_samps_in_rx_buff == num_rx_samps &&
                    scheduledTimestampMatches(rx_md.time_spec.get_real_secs(),
@@ -617,7 +641,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
       if (!valid) {
         stop_signal_called = true;
         transmit_thread.join_all();
-        throw std::runtime_error("First scheduled RX packet failed or missed its timestamp; capture is not a scheduled-start success.");
+        throw std::runtime_error("First scheduled RX packet failed or missed its timestamp; see preceding [SCHEDULE] First RX diagnostics. Capture is not a scheduled-start success.");
       }
       cout << "[SCHEDULE] First RX hardware timestamp: " << std::fixed
            << std::setprecision(9) << rx_md.time_spec.get_real_secs() << endl;

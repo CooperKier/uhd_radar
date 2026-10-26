@@ -89,3 +89,23 @@ does not configure the external serial GPS or use it as a timing reference.
 Software tests cover time interpretation, deadline handling, output isolation,
 runner cleanup, clock mapping, and first-timestamp comparison. The cloud has no
 attached SDR, so physical start-time accuracy still needs to be measured on the Pi.
+
+## If the first scheduled RX window fails
+
+`[SCHEDULE] First RX diagnostics` records the received/expected sample counts,
+whether UHD supplied a timestamp, its difference from the requested SDR time
+in seconds and samples, and the UHD error. The following metadata block
+includes fragmentation and end-of-burst information. Keep these lines when
+reporting a failure; the final process exit status alone does not identify it.
+
+A first-window failure can mean a transport error, a short receive, a missing
+timestamp, or a timestamp difference greater than one sample. The program
+rejects all of these; it does not widen the tolerance or silently start late.
+The `[TX]` stop messages afterward come from the shared RX-command scheduling
+thread and do not establish a transmitter fault.
+
+RX should still collect noise when the other SDR is not transmitting. Test RX
+alone while diagnosing this failure. Check the SDR's own interface speed with
+`lsusb -t`: a device at `480M` has a USB 2 connection even if a separate root
+hub reports `5000M`. USB speed, receive-window size, and host load are relevant
+to transport errors; a narrow receive window is not needed to diagnose timing.
