@@ -67,11 +67,11 @@ GPIO:
 RF0:
     rx_rate: *s_rate                     # [Hz] RX Sample Rate
     tx_rate: *s_rate                     # [Hz] TX Sample Rate
-    freq: 450e6                          # [Hz] Center Frequency (mixer frequency)
+    freq: 2.4e9                          # [Hz] Center frequency: 2.4 GHz
     lo_offset: 15e6                      # [Hz] LO offset
     rx_gain: 36                          # [dB] RX Gain
-    tx_gain: 65                          # [dB] TX Gain - 60.8 is about -10 dBm
-                                         #   output on the b205mini
+    tx_gain: 65                          # [dB] TX Gain; calibrate output power
+                                         #   for this device at 2.4 GHz
     bw: 56e6                             # [Hz] Configurable filter bandwidth
     tx_ant: "TX/RX"                      # Port to be used for TX
     rx_ant: "RX2"                        # port to be used for RX
@@ -85,11 +85,11 @@ RF0:
 RF1:
     rx_rate: *s_rate                     # [Hz] RX Sample Rate
     tx_rate: *s_rate                     # [Hz] TX Sample Rate
-    freq: 450e6                          # [Hz] Center Frequency (mixer frequency)
+    freq: 2.4e9                          # [Hz] Center frequency: 2.4 GHz
     lo_offset: 0e6                       # [Hz] LO offset
     rx_gain: 10                          # [dB] RX Gain
-    tx_gain: 10                          # [dB] TX Gain - 60.8 is about -10 dBm
-                                         #   output on the b205mini
+    tx_gain: 10                          # [dB] TX Gain; calibrate output power
+                                         #   for the active frequency
     bw: 56e6                             # [Hz] Configurable filter bandwidth
     tx_ant: "TX/RX"                      # Port to be used for TX
     rx_ant: "RX2"                        # port to be used for RX

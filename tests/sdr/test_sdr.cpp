@@ -45,7 +45,7 @@ TEST(loadConfigFromYaml, LoadsDefault){
     //RF
     EXPECT_EQ(sdr.getRxRate(), 56e6);
     EXPECT_EQ(sdr.getTxRate(), 56e6);
-    EXPECT_EQ(sdr.getFreq(), 450e6);
+    EXPECT_EQ(sdr.getFreq(), 2.4e9);
     EXPECT_EQ(sdr.getRxGain(), 36);
     EXPECT_EQ(sdr.getTxGain(), 65);
     EXPECT_EQ(sdr.getBw(), 56e6);

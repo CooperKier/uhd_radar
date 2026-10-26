@@ -17,10 +17,10 @@ date -u
 timedatectl status
 ```
 
-For the prepared Pi configuration, preview a start at noon UTC today:
+For the tracked RX template, preview a start at noon UTC today:
 
 ```bash
-python RxRunHighNoon.py --at "12:00:00" --config data/pi_setup/rx.yaml --dry-run
+python RxRunHighNoon.py --at "12:00:00" --config config/Rx_B206mini.yaml --dry-run
 ```
 
 Remove `--dry-run` to build, initialize, wait, and capture. Choose a time **at
@@ -29,13 +29,13 @@ noon has already passed, specify a future date explicitly. For example, replace
 the date below with the date you intend to use:
 
 ```bash
-python RxRunHighNoon.py --at "2026-10-26T12:00:00Z" --config data/pi_setup/rx.yaml
+python RxRunHighNoon.py --at "2026-10-26T12:00:00Z" --config config/Rx_B206mini.yaml
 ```
 
 For noon in a local time zone instead:
 
 ```bash
-python RxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config data/pi_setup/rx.yaml
+python RxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config config/Rx_B206mini.yaml
 ```
 
 - Without `--timezone` or an explicit offset, input times are **UTC**.
@@ -43,10 +43,19 @@ python RxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config data/
 - An explicit ISO offset, such as `2026-10-26T12:00:00-06:00`, determines the
   instant even if `--timezone` differs. Fractional seconds are accepted.
 - Ambiguous or nonexistent daylight-saving times require an explicit offset.
-- Without `--config`, the script uses `config/Rx_B206mini.yaml`. The prepared
-  `data/pi_setup/rx.yaml` baseline uses the tested 1 ms pulse spacing.
+- Without `--config`, the script uses `config/Rx_B206mini.yaml`: 2.4 GHz,
+  0 dB RX gain, 56 MS/s, and 50 two-millisecond windows spaced 100 ms apart.
+  Phase dithering is disabled and `num_presums` is 1. These settings produce
+  44,800,000 IQ bytes if every window succeeds. The file contains the windows,
+  not the gaps between them.
 - RX-only mode (`transmit: false`, `receive: true`) and `clk_ref: internal` are
   required. This script does not start a transmitter.
+
+The wider RX windows can contain a full 20-microsecond TX chirp even when the
+two SDRs have different pulse phases. They do not correct clock errors or the
+first-packet failure described below. Older local files such as
+`data/pi_setup/rx.yaml` and `data/rx_loopback.yaml` are preserved during updates;
+use the tracked template above to get the current settings after `git pull`.
 
 Each run creates `data/scheduled_rx/<UTC-time>_<unique-id>/`. It keeps a copy of
 the requested time/configuration and saves IQ data and the UHD log there on

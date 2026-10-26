@@ -19,8 +19,10 @@ for mode, template in [('rx', 'Rx_B206mini.yaml'), ('tx', 'Tx_B206mini.yaml')]:
     with (repo / 'config' / template).open() as stream:
         cfg = yaml.load(stream)
     cfg['GENERATE'].update(out_file='chirp.bin', show_plot=False)
-    cfg['RF0'].update(transmit=(mode == 'tx'), receive=(mode == 'rx'), tx_gain=0)
-    cfg['CHIRP'].update(time_offset=3.0, pulse_rep_int=1e-3, num_pulses=1000, num_presums=1)
+    cfg['RF0'].update(transmit=(mode == 'tx'), receive=(mode == 'rx'),
+                      freq=2.4e9, rx_gain=0, tx_gain=0)
+    # Keep the mode-specific RX/TX timing from the checked-in bench templates.
+    cfg['CHIRP'].update(time_offset=3.0, num_presums=1, phase_dithering=False)
     output = folder / mode
     output.mkdir(exist_ok=True)
     cfg['FILES'].update(output_dir=str(output.relative_to(repo)), chirp_loc='chirp.bin',

@@ -28,7 +28,7 @@ chirp file; TX-only runs save configuration and logs without an RX sample file.
 The optional `gpspipe` and `gpxlogger` programs may be absent.
 
 Important Settings:
-* `freq` is the center frequency of the output. Default is 450e6 or 450 MHz.
+* `freq` is the center frequency of the output. The default and RX/TX bench templates use `2.4e9` (2.4 GHz).
 * `num_pulses` is how many pulses are sent before ending the main loop. Default is 10,000. Can set to -1 to keep going indefinitely until manually stopped.
 * `save_loc` is where the SDR data will be temporarily saved. Default is `data/rx_samps.bin` in the data folder.
 * `max_chirps_per_file` is how much data will be put in each file before breaking into a new file. Can set to -1 to stop chirps from being split between files, default is -1.

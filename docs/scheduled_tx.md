@@ -47,12 +47,12 @@ using matching schedules. These utilities do not provide GPS/PPS synchronization
 
 ## 2. Schedule TX
 
-Activate the UHD 4.9 environment and use your prepared TX-only configuration:
+Activate the UHD 4.9 environment and use the tracked TX-only configuration:
 
 ```bash
 conda activate uhd-b206
-python TxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config data/pi_setup/tx.yaml --dry-run
-python TxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config data/pi_setup/tx.yaml
+python TxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config config/Tx_B206mini.yaml --dry-run
+python TxRunHighNoon.py --at "12:00:00" --timezone America/Denver --config config/Tx_B206mini.yaml
 ```
 
 This example means noon **today in Denver**. Choose a future time at least 30
@@ -65,14 +65,24 @@ An explicit offset determines the instant even when `--timezone` differs.
 writing files, building, or contacting the radio. Review the configuration and
 existing lab connections before launching the actual transmission.
 
-Without `--config`, TX uses `config/Tx_B206mini.yaml`. The prepared
-`data/pi_setup/tx.yaml` baseline uses 1 ms pulse spacing and 0 dB TX gain;
-the source template has different values. The runner preserves the selected
-RF settings. It requires:
+Without `--config`, TX uses `config/Tx_B206mini.yaml`: **2.4 GHz**, **0 dB TX
+gain**, **56 MS/s**, and **1,000 twenty-microsecond chirps at 1 ms spacing**.
+The chirp bandwidth is 25 MHz and phase dithering is disabled. Transmission
+lasts approximately one second. The runner preserves the selected RF settings.
+It requires:
 
 - `RF0.transmit: true`, `RF0.receive: false`;
 - `DEVICE.clk_ref: internal`, `cpu_format: fc32`, exactly one TX channel;
 - a finite `num_pulses >= 1`, with `pulse_rep_int >= tx_duration > 0`.
+
+The matching RX template records 50 two-millisecond windows at 100 ms spacing,
+over approximately five seconds. Start RX one second before TX to collect
+windows before, during, and after transmission. The wider windows allow for
+different pulse phases; they do not provide precise synchronization.
+
+An updated checkout contains both tracked templates. Previously generated files
+under `data/`, including `data/pi_setup/tx.yaml` and `data/tx_loopback.yaml`, keep
+their old settings. Use the tracked templates above for the new defaults.
 
 The requested time is for the **first transmitted sample**, followed by the
 configured pulse train. `CHIRP.time_offset` and RX-relative `tx_lead` do not

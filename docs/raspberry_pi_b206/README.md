@@ -82,7 +82,9 @@ set -o pipefail
 python runRx.py data/pi_setup/rx.yaml 2>&1 | tee "data/pi_setup/rx-console-$(date +%Y%m%d-%H%M%S).log"
 ```
 
-Expect **1,000 accepted receive windows, zero receiver errors**, and saved data under `data/pi_setup/rx/`. The configuration uses **1 ms pulse spacing and a 3 s startup delay**. With 1,120 complex samples per window, the IQ file should be **8,960,000 bytes**. A correct file size alone does not prove clean timing; check the log too.
+Expect **50 accepted receive windows, zero receiver errors**, and saved data under `data/pi_setup/rx/`. The configuration uses **2 ms receive windows spaced 100 ms apart and a 3 s startup delay**. At 56 MS/s, each window has 112,000 complex samples and the IQ file should be **44,800,000 bytes**. These are spaced windows over approximately five seconds, not a continuous recording. A correct file size alone does not prove clean timing; check the log too.
+
+The current RX/TX templates use **2.4 GHz**, **25 MHz chirp bandwidth**, **0 dB active gain**, and disabled phase dithering. The helper preserves existing `data/pi_setup/*.yaml` files; use the updated tracked templates directly if an older generated configuration still has different settings.
 
 Missing GPS messages are expected. Leave external serial GPS disconnected: that separate source path has an unresolved buffer defect. Internal-clock operation does not need Wi-Fi after setup.
 
@@ -94,15 +96,15 @@ The matching `TxRunHighNoon.py` and `set_pi_time.py` commands are documented in
 
 ## 6. Test transmit-only operation
 
-Connect **TX/RX → 30 dB attenuator → spectrum analyser**. Leave RX2 terminated and check the analyser's input rating. The prepared TX configuration starts at **0 dB TX gain**, not the template's 65 dB.
+Connect **TX/RX → 30 dB attenuator → spectrum analyser**. Check the analyser's input rating. Both the current source template and a newly prepared TX configuration start at **0 dB TX gain**. A termination on unused RX2 is optional for TX-only testing.
 
-Set the analyser to **450 MHz center, 50 MHz span, Max Hold and 100 ms sweep time**. Clear the old trace, then run:
+Set the analyser to **2400 MHz center, 50 MHz span, Max Hold and 100 ms sweep time**. Clear the old trace, then run:
 
 ```bash
 python runTx.py data/pi_setup/tx.yaml 2>&1 | tee "data/pi_setup/tx-console-$(date +%Y%m%d-%H%M%S).log"
 ```
 
-Look for the chirp around 450 MHz. Its nominal sweep is 437.5–462.5 MHz; the Kaiser window tapers the edges. TX-only saves configuration/logs but no RX sample file.
+Look for the chirp around **2.4 GHz**. Its nominal sweep is **2387.5–2412.5 MHz**; the Kaiser window tapers the edges. The TX configuration sends 1,000 chirps at 1 ms spacing, lasting approximately one second. TX-only saves configuration/logs but no RX sample file.
 
 The full console should have no `L` (late), `U` (underflow), or `S` (sequence-error) markers. The program's completion message alone does not prove every burst transmitted correctly. An analyser peak marker is not necessarily total or in-pulse chirp power. Account for the external pad without adding the analyser's already-corrected internal attenuation again.
 
@@ -113,7 +115,7 @@ The full console should have no `L` (late), `U` (underflow), or `S` (sequence-er
 | No devices found | UHD 4.9+, images, USB cable/speed, rules and Pi power |
 | CMake mentions `/Users/...` | Move the old build folder aside and configure again on the Pi |
 | Missing Boost/yaml-cpp/UHD libraries | Activate `uhd-b206` and reconfigure |
-| Late commands or repeated `L` | Confirm 1 ms pulse spacing, 3 s startup delay and USB 3 speed |
+| Late commands or repeated `L` | Confirm TX spacing of 1 ms, RX spacing of 100 ms, 3 s startup delay and USB 3 speed |
 | Thread-priority warning | Nonfatal, but may affect timing; resolve before claiming reliable performance |
 
 Keep the saved configuration, full console log and analyser screenshot for each test. Repeat the runs to check consistency.

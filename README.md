@@ -54,6 +54,12 @@ Use `set_pi_time.py` to set/check network synchronization or manually set the Pi
 See [scheduled TX and Pi clock setup](docs/scheduled_tx.md) and
 [scheduled RX usage and timing limits](docs/scheduled_rx.md).
 
+The RX/TX bench templates use **2.4 GHz** with **25 MHz chirp bandwidth** and
+**0 dB active gain**. TX sends 1,000 chirps at 1 ms spacing; RX records 50
+two-millisecond windows spaced 100 ms apart. Use the tracked files
+`config/Tx_B206mini.yaml` and `config/Rx_B206mini.yaml` after updating the repo;
+older generated configurations under `data/` retain their local settings.
+
 ## Information for developers and troubleshooting tips
 
 ### Adding a dependency
