@@ -411,6 +411,10 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
   YAML::Node config = YAML::LoadFile(yaml_filename);
   const auto scheduled_node = config["CHIRP"]["rx_start_utc"];
   const bool scheduled_rx = scheduled_node.IsDefined();
+  const double rx_start_tolerance = config["CHIRP"]["rx_start_tolerance"].as<double>(0.0);
+  if (scheduled_rx && (!std::isfinite(rx_start_tolerance) || rx_start_tolerance < 0)) {
+    throw std::invalid_argument("rx_start_tolerance must be finite and nonnegative (seconds).");
+  }
   const auto tx_scheduled_node = config["CHIRP"]["tx_start_utc"];
   const bool scheduled_tx = tx_scheduled_node.IsDefined();
   const bool scheduled = scheduled_rx || scheduled_tx;
@@ -634,10 +638,12 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
     if (scheduled_rx && pulses_received == 0) {
       reportScheduledRxPacket(rx_md, n_samps_in_rx_buff, num_rx_samps,
                               chirp.getTimeOffset(), sdr.getRxRate());
+      cout << "[SCHEDULE] First RX device-time tolerance (seconds): "
+           << std::setprecision(9) << std::fmax(rx_start_tolerance, 1.0 / sdr.getRxRate()) << endl;
       bool valid = rx_md.error_code == rx_metadata_t::ERROR_CODE_NONE &&
                    rx_md.has_time_spec && n_samps_in_rx_buff == num_rx_samps &&
                    scheduledTimestampMatches(rx_md.time_spec.get_real_secs(),
-                                             chirp.getTimeOffset(), sdr.getRxRate());
+                                             chirp.getTimeOffset(), sdr.getRxRate(), rx_start_tolerance);
       if (!valid) {
         stop_signal_called = true;
         transmit_thread.join_all();

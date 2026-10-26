@@ -26,9 +26,13 @@ inline double scheduledDeviceTime(double target_utc, const HostTimeSample& sampl
     return sample.device_time + (target_utc - (sample.before_utc + span / 2));
 }
 
-/** @brief Accept the first packet only if its hardware timestamp matches the target. */
-inline bool scheduledTimestampMatches(double actual, double expected, double sample_rate) {
+/** @brief Check device-time error against an explicit tolerance, at least one sample.
+ * This acceptance tolerance does not establish accuracy relative to UTC.
+ */
+inline bool scheduledTimestampMatches(double actual, double expected, double sample_rate,
+                                      double tolerance_seconds = 0.0) {
     return std::isfinite(actual) && std::isfinite(expected) &&
            std::isfinite(sample_rate) && sample_rate > 0 &&
-           std::abs(actual - expected) <= 1.0 / sample_rate;
+           std::isfinite(tolerance_seconds) && tolerance_seconds >= 0 &&
+           std::abs(actual - expected) <= std::fmax(1.0 / sample_rate, tolerance_seconds);
 }

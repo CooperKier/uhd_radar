@@ -70,7 +70,14 @@ The log includes the target SDR time, a clock-query half-span, and:
 ```
 
 The first packet must be error-free, complete, and timestamped within one sample
-of the computed SDR target. A missed deadline, failed first packet, or missing
+of the computed SDR target unless an explicit device-time tolerance is configured.
+The current RX bench template sets `CHIRP.rx_start_tolerance: 1e-6` (1 microsecond).
+The reported complete, error-free hardware window was approximately 125 ns
+(7 samples at 56 MS/s) after its computed target; the previous one-sample check
+rejected it. The configured tolerance accepts that offset without changing the
+requested time or correcting the hardware delay. The actual timestamp and error
+are still logged. Without this setting, the check defaults to one sample.
+A missed deadline, failed first packet, or missing
 confirmation causes an error instead of reporting a successful scheduled start.
 Later receive errors follow the existing runner's retry behavior; inspect the
 whole log before claiming an error-free capture. Pre-summing can average later
@@ -108,8 +115,10 @@ includes fragmentation and end-of-burst information. Keep these lines when
 reporting a failure; the final process exit status alone does not identify it.
 
 A first-window failure can mean a transport error, a short receive, a missing
-timestamp, or a timestamp difference greater than one sample. The program
-rejects all of these; it does not widen the tolerance or silently start late.
+timestamp, or a timestamp difference greater than the configured tolerance
+(at least one sample). The program rejects these; it does not silently retry
+the first window at a later time. The tolerance is a device-time acceptance
+limit, not an estimate or guarantee of UTC accuracy.
 The `[TX]` stop messages afterward come from the shared RX-command scheduling
 thread and do not establish a transmitter fault.
 

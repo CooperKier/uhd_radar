@@ -5,6 +5,7 @@ This is host-clock scheduling, not GPS/PPS synchronization. UTC error includes
 host-clock error, USB clock-query uncertainty, and subsequent oscillator drift.
 """
 import argparse
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -36,6 +37,9 @@ def load_rx_config(path):
         raise ValueError("This host-clock scheduler currently requires clk_ref: internal.")
     if any(key in config["CHIRP"] for key in ("rx_start_utc", "tx_start_utc")):
         raise ValueError("The source configuration already contains a scheduled time; use the original RX config.")
+    tolerance = float(config["CHIRP"].get("rx_start_tolerance", 0.0))
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("rx_start_tolerance must be finite and nonnegative (seconds).")
     return config
 
 

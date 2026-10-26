@@ -33,3 +33,15 @@ TEST(ScheduledStart, VerifiesFirstPacketToWithinOneSample) {
     EXPECT_FALSE(scheduledTimestampMatches(10.0, 10.0, 0.0));
     EXPECT_FALSE(scheduledTimestampMatches(std::numeric_limits<double>::quiet_NaN(), 10.0, 56e6));
 }
+
+TEST(ScheduledStart, AllowsConfiguredDeviceTimeToleranceWithoutRetiming) {
+    // Reported hardware run: complete, error-free window offset by 7.0095 samples.
+    const double actual = 58.0 + 1.2517002545564537e-7;
+    EXPECT_FALSE(scheduledTimestampMatches(actual, 58.0, 56e6));
+    EXPECT_TRUE(scheduledTimestampMatches(actual, 58.0, 56e6, 1e-6));
+    EXPECT_FALSE(scheduledTimestampMatches(58.0 + 2e-6, 58.0, 56e6, 1e-6));
+    EXPECT_FALSE(scheduledTimestampMatches(58.0 - 2e-6, 58.0, 56e6, 1e-6));
+    EXPECT_FALSE(scheduledTimestampMatches(actual, 58.0, 56e6, -1e-6));
+    EXPECT_FALSE(scheduledTimestampMatches(actual, 58.0, 56e6,
+                                          std::numeric_limits<double>::infinity()));
+}

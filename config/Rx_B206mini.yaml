@@ -101,6 +101,8 @@ RF1:
                                          #   supported on some SDRs)
 ### PULSE TIMING
 CHIRP:
+    rx_start_tolerance: 1e-6             # [s] Allowed first-packet device-time offset;
+                                         #   acceptance check, not UTC accuracy
     time_offset: 3                       # [s] Offset time before the first
                                          #   received sample
     tx_duration: *pulse_len              # [s] Transmission duration

@@ -62,6 +62,9 @@ def test_runtime_configuration_preserves_source_and_separates_runs(tmp_path):
 @pytest.mark.parametrize("section, key, value", [
     ("RF0", "transmit", True), ("RF0", "receive", False),
     ("DEVICE", "clk_ref", "external"), ("CHIRP", "rx_start_utc", 123),
+    ("CHIRP", "rx_start_tolerance", -1e-6),
+    ("CHIRP", "rx_start_tolerance", float("nan")),
+    ("CHIRP", "rx_start_tolerance", float("inf")),
 ])
 def test_rejects_incompatible_configurations(section, key, value, tmp_path):
     config = scheduled.load_rx_config(ROOT / "config/Rx_B206mini.yaml")
