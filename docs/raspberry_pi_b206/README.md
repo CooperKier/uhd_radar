@@ -53,7 +53,7 @@ ctest --test-dir sdr/build --output-on-failure -E 'gpsLock|check10MhzLock|checkA
 python -m pytest tests/ -q
 ```
 
-Expect **17 C++ software tests and 18 Python tests** to pass. Use `--parallel 1` if memory is limited. Hardware/GPS tests are excluded.
+Expect all software tests to pass. Use `--parallel 1` if memory is limited. Hardware/GPS tests are excluded.
 
 ## 4. Connect and detect the radio
 
@@ -86,6 +86,12 @@ Expect **1,000 accepted receive windows, zero receiver errors**, and saved data 
 
 Missing GPS messages are expected. Leave external serial GPS disconnected: that separate source path has an unresolved buffer defect. Internal-clock operation does not need Wi-Fi after setup.
 
+To schedule the first RX sample for a chosen time, see
+[scheduled RX instructions](../scheduled_rx.md). This uses the Pi clock and a
+timed UHD command; it does not provide GPS/PPS synchronization.
+The matching `TxRunHighNoon.py` and `set_pi_time.py` commands are documented in
+[scheduled TX and Pi clock setup](../scheduled_tx.md).
+
 ## 6. Test transmit-only operation
 
 Connect **TX/RX → 30 dB attenuator → spectrum analyser**. Leave RX2 terminated and check the analyser's input rating. The prepared TX configuration starts at **0 dB TX gain**, not the template's 65 dB.
@@ -112,4 +118,4 @@ The full console should have no `L` (late), `U` (underflow), or `S` (sequence-er
 
 Keep the saved configuration, full console log and analyser screenshot for each test. Repeat the runs to check consistency.
 
-**Validation:** all 17 C++ and 18 Python software tests passed in the cloud. The ARM dependency recipe resolved successfully. Actual installation and RF validation still need to pass on the new Pi. The earlier Pi demonstrated RX operation, but fully clean TX timing and loopback remain to be established. Do not connect TX directly to RX; loopback needs verified attenuation and input-power margin.
+**Validation:** software tests passed in the cloud. The ARM dependency recipe resolved successfully. Actual installation and RF validation still need to pass on the new Pi. The earlier Pi demonstrated RX operation, but fully clean TX timing and loopback remain to be established. Do not connect TX directly to RX; loopback needs verified attenuation and input-power margin.

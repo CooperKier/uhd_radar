@@ -36,6 +36,8 @@
 #include "utils.hpp"
 #include "sdr.hpp"
 #include "chirp.hpp"
+#include "scheduled_start.hpp"
+#include "scheduled_tx.hpp"
 
 
 

@@ -49,6 +49,11 @@ The recommended way of running everything is by using the `run.py` utility. In g
 This utility handles creating the chirp that will be transmitted, compiling and running the C++ code that interacts with the SDR, and collecting the output data.
 All of the configuration for this is contained within your configuration YAML file.
 
+For a start at a specified time, use `RxRunHighNoon.py` or `TxRunHighNoon.py`.
+Use `set_pi_time.py` to set/check network synchronization or manually set the Pi clock.
+See [scheduled TX and Pi clock setup](docs/scheduled_tx.md) and
+[scheduled RX usage and timing limits](docs/scheduled_rx.md).
+
 ## Information for developers and troubleshooting tips
 
 ### Adding a dependency

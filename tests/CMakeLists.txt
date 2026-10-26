@@ -53,6 +53,10 @@ target_link_libraries(test_sdr
 )
 
 include(GoogleTest)
+add_executable(test_scheduled_start sdr/test_scheduled_start.cpp sdr/test_scheduled_tx.cpp)
+target_include_directories(test_scheduled_start PRIVATE ../sdr)
+target_link_libraries(test_scheduled_start gtest_main)
+gtest_discover_tests(test_scheduled_start)
 gtest_discover_tests(test_utils)
 gtest_discover_tests(test_pseudorandom_phase)
 gtest_discover_tests(test_sdr)

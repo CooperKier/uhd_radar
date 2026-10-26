@@ -260,7 +260,116 @@ void configureNMEAMessages(boost::asio::serial_port& serial, uint8_t ggaRate) {
 } 
 
 
-/* 
+/** @brief Read the Pi's wall clock as Unix seconds; no GPS accuracy is implied. */
+double hostUtcNow() {
+  return std::chrono::duration<double>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+/** @brief Retain the narrowest valid host-time bracket around five USB clock reads. */
+HostTimeSample measureHostTime(usrp::multi_usrp::sptr usrp) {
+  HostTimeSample best{0.0, INFINITY, 0.0};
+  for (int i = 0; i < 5; ++i) {
+    double before = hostUtcNow();
+    double device = usrp->get_time_now().get_real_secs();
+    double after = hostUtcNow();
+    if (after >= before && after - before < best.after_utc - best.before_utc) {
+      best = {before, after, device};
+    }
+  }
+  return best;
+}
+
+/** @brief Wait until the final ten seconds, before any scheduled command is issued. */
+bool waitForScheduledArm(double target_utc) {
+  cout << "[SCHEDULE] Requested host UTC Unix seconds: " << std::fixed
+       << std::setprecision(6) << target_utc << endl;
+  while (!stop_signal_called && target_utc - hostUtcNow() > 10.0) {
+    this_thread::sleep_for(chrono::milliseconds(100));
+  }
+  return !stop_signal_called;
+}
+
+/** @brief Queue a hardware-timed start using an explicitly approximate host-UTC mapping. */
+bool armScheduledStart(Sdr& sdr, Chirp& chirp, double target_utc, const char* direction) {
+  if (!waitForScheduledArm(target_utc)) return false;
+  auto sample = measureHostTime(sdr.getUsrp());
+  double start = scheduledDeviceTime(target_utc, sample);
+  if (target_utc - hostUtcNow() < 2.0) {
+    throw std::runtime_error("Scheduled deadline passed during clock measurement; not starting late.");
+  }
+  chirp.setTimeOffset(start);
+  cout << "[SCHEDULE] Target first " << direction << " device time: " << std::setprecision(9)
+       << start << "; clock-query half-span: "
+       << (sample.after_utc - sample.before_utc) / 2 << " seconds" << endl;
+  cout << "[SCHEDULE] UTC accuracy also depends on host-clock error, drift and USB latency; no PPS synchronization." << endl;
+  return true;
+}
+
+/** @brief Adapt UHD timed sends and asynchronous messages to the tested TX scheduler. */
+struct UhdScheduledTx {
+  Sdr& sdr;
+  Chirp& chirp;
+  vector<complex<float>> original;
+  vector<complex<float>> buffer;
+
+  double now() { return sdr.getUsrp()->get_time_now().get_real_secs(); }
+  bool stopped() { return stop_signal_called; }
+
+  /** @brief Send one complete timed burst, preserving the configured phase sequence. */
+  size_t send(long, double target) {
+    if (chirp.getPhaseDither()) {
+      auto scale = polar(1.0f, get_next_phase(true));
+      transform(original.begin(), original.end(), buffer.begin(),
+                [scale](const complex<float>& x) { return scale * x; });
+    }
+    tx_metadata_t md;
+    md.has_time_spec = md.start_of_burst = md.end_of_burst = true;
+    md.time_spec = time_spec_t(target);
+    return sdr.getTxStream()->send(buffer.data(), buffer.size(), md, 1.0);
+  }
+
+  /** @brief Convert async messages, preserving the UHD error in the run log. */
+  ScheduledTxEvent event(double timeout) {
+    async_metadata_t md;
+    if (!sdr.getTxStream()->recv_async_msg(md, timeout)) return ScheduledTxEvent::None;
+    if (md.event_code == async_metadata_t::EVENT_CODE_BURST_ACK) return ScheduledTxEvent::Ack;
+    if (md.event_code == async_metadata_t::EVENT_CODE_OK) return ScheduledTxEvent::None;
+    cerr << "[SCHEDULE] TX error: " << md.strevent() << endl;
+    return ScheduledTxEvent::Error;
+  }
+
+  /** @brief Record the first completed burst; its target is not a measured UTC timestamp. */
+  void acknowledged(long index, double target) {
+    if (index == 0) {
+      cout << "[SCHEDULE] First TX burst acknowledged; target device time: "
+           << std::fixed << std::setprecision(9) << target << endl;
+    }
+  }
+};
+
+/** @brief Load the chirp before mapping clocks and require ACKs for the entire TX train. */
+bool runScheduledTx(Sdr& sdr, Chirp& chirp, double target_utc) {
+  validateScheduledTx(0, chirp.getPulseRepInt(), chirp.getTxDuration(),
+                      chirp.getNumPulses(), num_tx_samps);
+  if (sdr.getTxStream()->get_num_channels() != 1) {
+    throw std::runtime_error("Scheduled TX currently requires exactly one TX channel.");
+  }
+  UhdScheduledTx transport{sdr, chirp, vector<complex<float>>(num_tx_samps), {}};
+  ifstream input("../../" + output_dir + "/" + chirp_loc, ifstream::binary);
+  if (!input.read(reinterpret_cast<char*>(transport.original.data()),
+                  num_tx_samps * sizeof(complex<float>))) {
+    throw std::runtime_error("Scheduled TX chirp file is missing or too short.");
+  }
+  transport.buffer = transport.original;
+  if (!armScheduledStart(sdr, chirp, target_utc, "TX")) return false;
+  long count = transmitScheduledBursts(transport, chirp.getTimeOffset(),
+      chirp.getPulseRepInt(), chirp.getTxDuration(), chirp.getNumPulses(), num_tx_samps);
+  cout << "[SCHEDULE] TX complete; acknowledged bursts: " << count << endl;
+  return true;
+}
+
+/*
  * UHD_SAFE_MAIN
  */
 int UHD_SAFE_MAIN(int argc, char *argv[]) {
@@ -278,6 +387,28 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
   Sdr sdr(yaml_filename);
   Chirp chirp(yaml_filename);
   YAML::Node config = YAML::LoadFile(yaml_filename);
+  const auto scheduled_node = config["CHIRP"]["rx_start_utc"];
+  const bool scheduled_rx = scheduled_node.IsDefined();
+  const auto tx_scheduled_node = config["CHIRP"]["tx_start_utc"];
+  const bool scheduled_tx = tx_scheduled_node.IsDefined();
+  const bool scheduled = scheduled_rx || scheduled_tx;
+  const double target_utc = scheduled_rx ? scheduled_node.as<double>() :
+                           scheduled_tx ? tx_scheduled_node.as<double>() : 0.0;
+  if (scheduled_rx && scheduled_tx) {
+    throw std::runtime_error("Use only one of rx_start_utc and tx_start_utc.");
+  }
+  if (scheduled && (sdr.getClkRef() != "internal" ||
+      (scheduled_rx && (sdr.getTransmit() || !sdr.getReceive())) ||
+      (scheduled_tx && (!sdr.getTransmit() || sdr.getReceive())))) {
+    throw std::runtime_error("Scheduled host-UTC mode requires RX-only or TX-only operation matching the requested start, and an internal clock.");
+  }
+  if (scheduled && (!std::isfinite(target_utc) || target_utc <= 0)) {
+    throw std::invalid_argument("Scheduled start must be a positive, finite Unix timestamp.");
+  }
+  if (scheduled_tx) {
+    validateScheduledTx(0, chirp.getPulseRepInt(), chirp.getTxDuration(),
+                        chirp.getNumPulses(), size_t(1));
+  }
   sdr.createUsrp();
   sdr.setupUsrp();
 
@@ -332,13 +463,23 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
   }
  
   // update the offset time for start of streaming to be offset from the current usrp time
-  chirp.setTimeOffset(chirp.getTimeOffset() + time_spec_t(sdr.getUsrp()->get_time_now()).get_real_secs());  //needs to be after chirp and sdr object are both made
+  if (scheduled_tx) {
+    if (sdr.getCpuFormat() != "fc32") {
+      throw std::runtime_error("Scheduled TX currently requires cpu_format: fc32.");
+    }
+    return runScheduledTx(sdr, chirp, target_utc) ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+  if (!scheduled_rx) {
+    chirp.setTimeOffset(chirp.getTimeOffset() + time_spec_t(sdr.getUsrp()->get_time_now()).get_real_secs());
+  }
 
   /*** SPAWN THE TX THREAD ***/
   // Note: the stream pointers are null when the corresponding direction is
   // disabled; transmit_worker checks sdr.getTransmit()/getReceive() before use.
   boost::thread_group transmit_thread;
-  transmit_thread.create_thread(boost::bind(&transmit_worker, sdr.getTxStream(), sdr.getRxStream(), boost::ref(chirp), boost::ref(sdr)));
+  if (!scheduled_rx) {
+    transmit_thread.create_thread(boost::bind(&transmit_worker, sdr.getTxStream(), sdr.getRxStream(), boost::ref(chirp), boost::ref(sdr)));
+  }
 
   //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -423,15 +564,17 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
 
   io_context io;
   serial_port serial(io);
-  bool using_gps = true;
+  bool using_gps = !scheduled_rx;
 
   // TODO: Consider using a library for working with GPS;
-  try {
-    printf("Opening serial port...\n");
-    serial.open("/dev/ttyACM0");  // Adjust if needed for your system
-  } catch (boost::system::system_error err) {
-    printf("Failed to open GPS.\n");
-    using_gps = false;
+  if (using_gps) {
+    try {
+      printf("Opening serial port...\n");
+      serial.open("/dev/ttyACM0");  // Adjust if needed for your system
+    } catch (boost::system::system_error err) {
+      printf("Failed to open GPS.\n");
+      using_gps = false;
+    }
   }
 
   if (using_gps) {
@@ -452,12 +595,33 @@ int UHD_SAFE_MAIN(int argc, char *argv[]) {
   std::string line;
   char c; 
 
+  if (scheduled_rx) {
+    if (!armScheduledStart(sdr, chirp, target_utc, "RX")) {
+      return EXIT_FAILURE;
+    }
+    transmit_thread.create_thread(boost::bind(&transmit_worker, sdr.getTxStream(), sdr.getRxStream(), boost::ref(chirp), boost::ref(sdr)));
+  }
+
   // Note: This print statement is used by automated post-processing code. Please be careful about changing the format.
   cout << "[START] Beginning main loop" << endl;
 
   while ((chirp.getNumPulses() < 0) || (last_pulse_num_written < chirp.getNumPulses())) {
 
     n_samps_in_rx_buff = sdr.getRxStream()->recv(buffs, num_rx_samps, rx_md, 60.0, false); // TODO: Think about timeout
+
+    if (scheduled_rx && pulses_received == 0) {
+      bool valid = rx_md.error_code == rx_metadata_t::ERROR_CODE_NONE &&
+                   rx_md.has_time_spec && n_samps_in_rx_buff == num_rx_samps &&
+                   scheduledTimestampMatches(rx_md.time_spec.get_real_secs(),
+                                             chirp.getTimeOffset(), sdr.getRxRate());
+      if (!valid) {
+        stop_signal_called = true;
+        transmit_thread.join_all();
+        throw std::runtime_error("First scheduled RX packet failed or missed its timestamp; capture is not a scheduled-start success.");
+      }
+      cout << "[SCHEDULE] First RX hardware timestamp: " << std::fixed
+           << std::setprecision(9) << rx_md.time_spec.get_real_secs() << endl;
+    }
 
     // Check for errors in the RX buffer
     handleRxBuffer(n_samps_in_rx_buff, rx_md, chirp, buff, sample_sum, inversion_phase);
