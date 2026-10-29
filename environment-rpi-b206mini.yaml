@@ -1,0 +1,23 @@
+name: uhd-b206mini
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>3.8
+  - boost-cpp
+  - uhd>=4.9,<5 # B206mini support was added in UHD 4.9:
+  - scipy
+  - matplotlib
+  - ruamel.yaml
+  - yaml-cpp=0.6.3
+  - xarray
+  - dask
+  - zarr
+  - hvplot
+  - datashader
+  - pip
+  - pip:
+    - gpiozero
+    - RPi.GPIO
+    - sparkfun-qwiic
+    - pi-ina219

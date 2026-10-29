@@ -35,7 +35,29 @@ And you're good to go. This installs UHD and all the other necessary dependencie
 
 For directly interacting with the SDRs, you will need to download the FPGA images. After activating the environment, you can do this by running: `uhd_images_downloader`
 
+### Raspberry Pi with a B206mini
+
+The B206mini requires [UHD 4.9 or newer](https://files.ettus.com/manual/page_usrp_b200.html#b200_installation). Use [environment-rpi-b206mini.yaml](environment-rpi-b206mini.yaml) to create a separate `uhd-b206mini` environment with the Raspberry Pi dependencies and UHD 4.9 or newer (below 5.0):
+
+```bash
+conda env create -f environment-rpi-b206mini.yaml
+conda activate uhd-b206mini
+uhd_images_downloader
+uhd_config_info --version
+uhd_find_devices
+uhd_usrp_probe --args "type=b200"
+```
+
+Run these commands from the repository directory on the Raspberry Pi, with the B206mini connected for discovery and probing. The original environments retain their UHD 4.4 upper bound because of [UHD issue #751](https://github.com/EttusResearch/uhd/issues/751); this newer environment still needs radar streaming validation on the hardware.
+
+If you previously built the SDR code in another environment, clear the CMake cache (or use a fresh build directory) before rebuilding with `uhd-b206mini` active so it links against the new UHD installation. The [radar service script](manager/radar_service.sh) activates `uhd` explicitly; change that activation to `uhd-b206mini` when deploying this environment through the service.
+
 ### Running the code
+
+For transmit-only operation with GPS on a Raspberry Pi 5/B206mini, use the
+independent [sdr_Tx build and runner](sdr_Tx/README.md). Prepare once with
+`python run_tx.py config/tx_b206mini.yaml --prepare`, then start runs with
+`python run_tx.py config/tx_b206mini.yaml`.
 
 Everything about the experiment you want to run is defined by a configuration YAML file. You can take a look at the examples in the `config/` directory,
 but you'll likely need to create your own file for whatever you want to do specifically. The `config/default.yaml` file contains comments explaining roughly what each parameter does.

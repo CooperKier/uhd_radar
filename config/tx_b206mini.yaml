@@ -1,0 +1,171 @@
+# Raspberry Pi 5 / B206mini: shared experiment config for TX and RX devices.
+# Keep identical copies on both devices for post-processing. The TX-only runner
+# reads TX settings and ignores the RX, RX archival, and plotting settings.
+
+### CHIRP AND PULSE PARAMETERS
+GENERATE:
+    sample_rate: &rate 56e6              # [Hz] Generated chirp sample rate,
+                                        #   also used as the TX and RX rate
+    chirp_type: linear                   # Chirp frequency progression type.
+                                        #   Options: "linear", "hyperbolic"
+    chirp_bandwidth: 25e6                # [Hz] Bandwidth of the chirp
+    lo_offset_sw: 0                      # [Hz] Chirp center frequency relative
+                                        #   to the RF center frequency
+    window: hamming                     # Window applied to the chirp.
+                                        #   Options: "rectangular", "hamming",
+                                        #   "blackman", "kaiser10", "kaiser14",
+                                        #   "kaiser18"
+    chirp_length: &duration 20e-6         # [s] Chirp length without zero padding
+    pulse_length: *duration              # [s] Total pulse length, including
+                                        #   symmetric zero padding
+    out_file: &waveform tx_chirp.bin      # Binary file containing pulse samples
+    show_plot: false                     # Display plots of the generated chirp
+
+### DEVICE CONNECTION AND DATA TRANSFER
+DEVICE:
+    # USRP device arguments identify SDRs, configure model-specific parameters,
+    # and set transport parameters for the USB or Ethernet link to the host.
+    # Host transport tuning:
+    # https://radioglaciology.github.io/orca-documentation/docs/radar/host-connection/
+    # Device identification: https://files.ettus.com/manual/page_identification.html
+    # Advanced config: https://files.ettus.com/manual/page_configuration.html
+    # Transport parameters: https://files.ettus.com/manual/page_transport.html
+    device_args: "type=b200,num_recv_frames=700,num_send_frames=700,recv_frame_size=11000,send_frame_size=11000"
+    subdev: "A:A"                       # Active SDR submodule specification.
+                                        #   See page_configuration.html above
+    clk_ref: internal                   # Clock reference: "internal", "external",
+                                        #   or "gpsdo", if supported by hardware.
+                                        #   A USB GPS logger is not a GPSDO.
+                                        #   https://files.ettus.com/manual/page_sync.html
+    clk_rate: 56e6                      # [Hz] SDR master clock frequency
+    tx_channels: "0"                    # Comma-separated list of TX channels;
+                                        #   TX-only runner supports one channel
+    rx_channels: "0"                    # Comma-separated list of RX channels.
+                                        #   Original combined SDR code requires
+                                        #   matching TX/RX channel-list lengths.
+    cpu_format: fc32                    # CPU-side sample format. Original tools
+                                        #   support "fc32", "sc16", "sc8";
+                                        #   TX-only runner requires "fc32".
+                                        #   https://files.ettus.com/manual/structuhd_1_1stream__args__t.html
+    otw_format: sc16                    # On-the-wire sample format; must be
+                                        #   supported by the SDR and UHD
+
+### GPIO PIN CONFIGURATION
+GPIO:
+    gpio_bank: FP0                      # GPIO bank (FP0 is the front-panel bank)
+    pwr_amp_pin: -1                     # External amplifier control pin using
+                                        #   the original DB15 pin numbering;
+                                        #   -1 disables amplifier GPIO control
+    ref_out: -1                         # 10 MHz reference output: 1 enables,
+                                        #   0 disables, -1 leaves it unchanged
+
+### RF FRONTEND 0 CONFIGURATION
+RF0:
+    rx_rate: *rate                      # [Hz] RX sample rate
+    tx_rate: *rate                      # [Hz] TX sample rate
+    freq: &center_freq 2400e6           # [Hz] RF center frequency (mixer frequency)
+    lo_offset: 0                        # [Hz] Hardware LO offset
+    rx_gain: &rx_gain 36                # [dB] RX gain
+    tx_gain: 65                          # [dB] TX gain; output power depends on
+                                        #   the SDR, frequency, and waveform
+    bw: 56e6                            # [Hz] Configurable analog filter bandwidth;
+                                        #   0 skips explicit bandwidth setting
+    tx_ant: "TX/RX"                     # Antenna port used for TX
+    rx_ant: "RX2"                       # Antenna port used for RX
+    transmit: true                      # Enable TX. TX-only runner refuses false;
+                                        #   original combined runner also reads
+                                        #   this flag, so it does not select a
+                                        #   receive-only role for a shared config.
+    tuning_args: ""                     # Optional UHD tuning arguments, such as
+                                        #   integer-N tuning; "" uses defaults
+
+### RF FRONTEND 1 COMPATIBILITY SETTINGS
+# The original SDR loader reads RF1 even with one channel. These matching
+# values preserve its config interface; they do not enable a second frontend.
+RF1:
+    rx_rate: *rate                      # [Hz] RX sample rate
+    tx_rate: *rate                      # [Hz] TX sample rate
+    freq: *center_freq                  # [Hz] RF center frequency, matching RF0
+    lo_offset: 0                        # [Hz] Hardware LO offset
+    rx_gain: *rx_gain                   # [dB] RX gain, matching RF0
+    tx_gain: 0                          # [dB] TX gain
+    bw: 56e6                            # [Hz] Analog filter bandwidth; 0 skips it
+    tx_ant: "TX/RX"                     # Antenna port used for TX
+    rx_ant: "RX2"                       # Antenna port used for RX
+    transmit: false                     # Compatibility value; ignored by the
+                                        #   single-channel TX-only runner
+    tuning_args: ""                     # Optional UHD tuning arguments
+
+### PULSE TIMING
+CHIRP:
+    time_offset: 0.1                    # [s] Delay before the first TX pulse in
+                                        #   TX-only mode, or first receive in
+                                        #   the original combined SDR code
+    tx_duration: *duration              # [s] Transmission duration per pulse
+    rx_duration: *duration              # [s] Receive duration per pulse
+    tr_on_lead: 0                       # [s] GPIO turn-on lead before TX;
+                                        #   TX-only ATR requires 0
+    tr_off_trail: 0                     # [s] GPIO turn-off trail after TX;
+                                        #   TX-only ATR requires 0
+    pulse_rep_int: 200e-6               # [s] Pulse repetition interval
+    tx_lead: 0                          # [s] Time from TX start to RX start;
+                                        #   ignored by the TX-only runner
+    num_pulses: 10000                   # Number of TX/RX pulses; -1 repeats
+                                        #   until stopped. TX-only mode sends
+                                        #   no pulses when this is 0.
+    num_presums: 1                      # Error-free RX pulses averaged per saved
+                                        #   record; ignored by TX-only runner
+    phase_dithering: true               # Enable pulse-to-pulse phase modulation;
+                                        #   RX processing must undo the same
+                                        #   phase sequence before averaging
+
+### DURING-RECORDING FILE LOCATIONS
+FILES:
+    output_dir: data                    # Directory for waveform and data files
+    chirp_loc: *waveform                # Chirp binary to transmit, matching
+                                        #   GENERATE.out_file
+    save_loc: &rx_file rx_samps.bin      # Temporary file for received samples,
+                                        #   relative to output_dir
+    gps_loc: gps_log.txt                 # GPS file for the original archival
+                                        #   path. TX runner stores GPS logs in
+                                        #   each run's timestamped directory.
+    max_chirps_per_file: -1             # Maximum saved RX records per file;
+                                        #   -1 disables file splitting
+
+### RX RUN MANAGER FILE SAVE OPTIONS
+# Used by the original RX data archival path, not by run_tx.py.
+RUN_MANAGER:
+    # With max_chirps_per_file: -1, final_save_loc and save_partial_files are ignored.
+    final_save_loc: null                # Merged output file path; null disables
+                                        #   saving an additional merged file
+    save_partial_files: false           # Preserve individual split files when
+                                        #   true; false keeps only merged output
+    save_gps: true                      # Archive the GPS file with RX data
+
+### POST-PROCESSING PLOT PARAMETERS
+PLOT:
+    rx_samps: *rx_file                  # Received sample file to plot
+    orig_chirp: *waveform               # Transmitted chirp associated with RX data
+    sample_rate: *rate                  # [Hz] Sample rate used for plotting
+    sig_speed: 1.685e8                  # [m/s] Signal speed through the medium.
+                                        #   Original ice preset; adjust for your
+                                        #   propagation medium.
+    direct_start: 0                     # First sample to search for direct arrival
+    echo_start: 1                       # Begin echo search this many samples
+                                        #   after the detected direct arrival
+
+### ENVIRONMENTAL FACTORS FOR AUTOMATIC AMPLIFICATION
+# Optional auto-amplification model, copied from the original default config.
+# Set these values for the measurement and receiver hardware before using it.
+ENVIRONMENTAL_FACTORS:
+    scattering_max: 1                   # Assumed maximum scattering factor
+    scattering_current: 0.5             # Scattering factor for this measurement
+    specular_reflection_coeff_max: 1    # Maximum reflection coefficient; original
+                                        #   preset assumes s polarization
+    specular_reflection_coeff_current: 0.5 # Reflection coefficient for this measurement
+    antenna_gain: 6                     # [dB] Antenna gain
+    tilt_of_plane: 0                    # Plane tilt parameter (theta)
+    reference_power: -66                # [dBm] Reference received power
+    power_loss: 35                      # [dB] Assumed power loss
+    max_rx_gain: 76                     # [dB] Receiver gain ceiling; original
+                                        #   B205mini preset, verify for your SDR
