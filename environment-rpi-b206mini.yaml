@@ -4,7 +4,7 @@ channels:
   - defaults
 dependencies:
   - python>3.8
-  - boost-cpp
+  - libboost-devel # Modern Boost headers/libraries compatible with UHD 4.9+
   - uhd>=4.9,<5 # B206mini support was added in UHD 4.9:
   - scipy
   - matplotlib

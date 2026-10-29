@@ -50,6 +50,8 @@ uhd_usrp_probe --args "type=b200"
 
 Run these commands from the repository directory on the Raspberry Pi, with the B206mini connected for discovery and probing. The original environments retain their UHD 4.4 upper bound because of [UHD issue #751](https://github.com/EttusResearch/uhd/issues/751); this newer environment still needs radar streaming validation on the hardware.
 
+The B206mini environment uses `libboost-devel` for the newer Boost libraries required by UHD. If environment creation reports a conflict between `boost-cpp` and `libboost`, update your checkout with `git pull --ff-only` and retry with the current environment file.
+
 If you previously built the SDR code in another environment, clear the CMake cache (or use a fresh build directory) before rebuilding with `uhd-b206mini` active so it links against the new UHD installation. The [radar service script](manager/radar_service.sh) activates `uhd` explicitly; change that activation to `uhd-b206mini` when deploying this environment through the service.
 
 ### Running the code
