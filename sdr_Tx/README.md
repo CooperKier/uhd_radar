@@ -1,5 +1,10 @@
 # TX-only SDR
 
+For the generator-PPS, preamble/header and separate-receiver proof of concept,
+use [run_poc.py](../run_poc.py) and the [shared-PPS instructions](../sdr_Rx/README.md).
+That path builds `radar_tx_poc`; the existing `radar_tx` workflow below remains
+available for the original TX-only experiment.
+
 This directory adapts the device, chirp, RF, phase dithering, transmit loop, and
 GPS code from [sdr](../sdr) for a Raspberry Pi 5 with a B206mini. It builds
 independently and has no receive stream, receive configuration requirements,

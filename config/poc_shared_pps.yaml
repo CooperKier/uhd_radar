@@ -1,0 +1,69 @@
+# Shared bench PoC config. Copy the SAME file to both Pis.
+# One generator feeds both REF inputs with the same 1 Hz PPS signal.
+# Disable generator output until BOTH processes print [SYNC] ARMED.
+GENERATE:
+    sample_rate: &rate 4e6               # [Hz] Modest rate for continuous Pi capture
+    chirp_type: linear
+    chirp_bandwidth: 2e6                 # [Hz] Within the 4 MS/s Nyquist bandwidth
+    lo_offset_sw: 0
+    window: hamming
+    chirp_length: &duration 20e-6        # [s] Chirp length, excluding sync framing
+    pulse_length: *duration
+    out_file: &waveform poc_chirp.bin
+    show_plot: false
+DEVICE:
+    device_args: "type=b200"             # Override per radio with --device-args
+    subdev: "A:A"
+    clk_ref: internal                   # Independent local frequency references
+    time_ref: external                  # Generator PPS into the REF input
+    clk_rate: 16e6                      # [Hz] Explicit B2xx master clock
+    tx_channels: "0"
+    rx_channels: "0"
+    cpu_format: fc32
+    otw_format: sc16
+GPIO:
+    gpio_bank: FP0
+    pwr_amp_pin: -1
+    ref_out: -1
+RF0:
+    rx_rate: *rate
+    tx_rate: *rate
+    freq: 2400e6                        # [Hz] Agreed bootstrap/experiment frequency
+    lo_offset: 0
+    rx_gain: 20                         # [dB] Adjust for the actual RF path
+    tx_gain: 0                          # [dB] Low initial bench gain
+    bw: 4e6
+    tx_ant: "TX/RX"
+    rx_ant: "RX2"
+    transmit: true                      # RX executable never opens a TX stream
+    tuning_args: ""
+CHIRP:
+    time_offset: 0.1                    # Legacy setting; SYNC.start_time controls PoC
+    tx_duration: *duration
+    rx_duration: 100e-6                 # [s] Extracted IQ window, including echo tail
+    tr_on_lead: 0
+    tr_off_trail: 0
+    tx_lead: 0
+    pulse_rep_int: 1e-3                 # [s] PRI within each frame; sync adds frame gaps
+    num_pulses: 1000                    # Finite capture required in this PoC
+    num_presums: 10                     # Pi-side average after timing/phase correction
+    phase_dithering: false              # Enable after undithered bench validation
+FILES:
+    output_dir: data
+    chirp_loc: *waveform
+SYNC:
+    mode: shared_pps
+    run_id: 1                           # Change for a different experiment
+    phase_seed: 0                       # Same MT19937/float phase algorithm as legacy TX
+    start_time: 5.0                     # [s] First frame after the shared zero PPS edge
+    arm_timeout: 120.0                  # [s] Maximum wait for operator to enable PPS
+    quiet_seconds: 1.2                  # Confirm PPS output is disabled before arming
+    pulses_per_frame: 50                # Repeat preamble + CRC header every 50 chirps
+    preamble_sps: 4                     # Known 31-chip PN block, repeated four times
+    header_sps: 8                       # Samples/symbol for differential BPSK header
+    amplitude: 0.35                     # Digital amplitude for sync and radar samples
+    capture_lead: 0.01                  # [s] RX starts before the first TX frame
+    capture_tail: 0.01                  # [s] RX continues after the final frame
+    search_seconds: 0.002               # [s] Preamble search around each expected frame
+    correlation_threshold: 0.45         # Normalized PN correlation threshold (0..1)
+    max_clock_error_ppm: 100.0          # Reject implausible inter-frame timing drift

@@ -24,7 +24,7 @@ else()
 endif()
 target_link_libraries(radar_tx PRIVATE ${UHD_LIBRARIES} ${TX_YAML_TARGET} Threads::Threads)
 
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED CONFIG)
 target_include_directories(radar_tx PRIVATE ${Boost_INCLUDE_DIRS})
 add_executable(gps_logger gps_logger.cpp)
 target_include_directories(gps_logger PRIVATE ${Boost_INCLUDE_DIRS})
@@ -32,3 +32,8 @@ target_compile_definitions(gps_logger PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
 target_link_libraries(gps_logger PRIVATE Threads::Threads)
 
 add_executable(pseudorandom_phase_codes_to_file pseudorandom_phase_to_file.cpp pseudorandom_phase.cpp)
+
+# Framed shared-PPS PoC; legacy radar_tx remains available independently.
+include(../sdr_common/poc_dependencies.cmake)
+add_executable(radar_tx_poc poc_main.cpp sdr.cpp rf_settings.cpp)
+target_link_libraries(radar_tx_poc PRIVATE poc_dependencies)

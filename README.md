@@ -56,6 +56,12 @@ If you previously built the SDR code in another environment, clear the CMake cac
 
 ### Running the code
 
+For a two-radio bench proof of concept using one shared PPS generator, see the
+[separate TX/RX PoC instructions](sdr_Rx/README.md). Use the same
+[PoC config](config/poc_shared_pps.yaml) on both hosts and prepare each role with
+`python run_poc.py tx --prepare` or `python run_poc.py rx --prepare`. Keep the
+generator disabled until both terminals report `[SYNC] ARMED`.
+
 For transmit-only operation with GPS on a Raspberry Pi 5/B206mini, use the
 independent [sdr_Tx build and runner](sdr_Tx/README.md). Prepare once with
 `python run_tx.py config/tx_b206mini.yaml --prepare`, then start runs with
