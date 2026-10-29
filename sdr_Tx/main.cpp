@@ -14,7 +14,7 @@ void checkTxEvents(tx_streamer::sptr stream, uint64_t& completed, double timeout
     if (event.event_code == async_metadata_t::EVENT_CODE_BURST_ACK) {
       ++completed;
     } else {
-      throw runtime_error("TX streaming error (UHD async event " +
+      throw std::runtime_error("TX streaming error (UHD async event " +
                           to_string(static_cast<int>(event.event_code)) + ").");
     }
   } while (stream->recv_async_msg(event, 0.0));
@@ -60,7 +60,7 @@ void transmitWorker(Sdr& sdr, const Chirp& chirp,
       }
       if (stop_signal_called) break;
       if (pulse_time <= deviceTime()) {
-        throw runtime_error("TX scheduler fell behind. Increase PRI or reduce sample rate/load.");
+        throw std::runtime_error("TX scheduler fell behind. Increase PRI or reduce sample rate/load.");
       }
       const complex<float>* data = samples.data();
       if (chirp.phase_dither) {
@@ -79,7 +79,7 @@ void transmitWorker(Sdr& sdr, const Chirp& chirp,
         metadata.time_spec = time_spec_t(pulse_time);
         // A timeout is a failed pulse: never silently count a partial waveform.
         const size_t sent = stream->send(data + offset, count, metadata, 0.2);
-        if (sent != count) throw runtime_error("TX send timed out before the full pulse was queued.");
+        if (sent != count) throw std::runtime_error("TX send timed out before the full pulse was queued.");
         offset += sent;
       }
       if (offset != samples.size()) break;
@@ -93,7 +93,7 @@ void transmitWorker(Sdr& sdr, const Chirp& chirp,
         chrono::duration<double>(remaining + 1.0);
     while (!stop_signal_called && completed < scheduled) {
       checkTxEvents(stream, completed, 0.01);
-      if (chrono::steady_clock::now() >= deadline) throw runtime_error("Timed out waiting for TX burst acknowledgements.");
+      if (chrono::steady_clock::now() >= deadline) throw std::runtime_error("Timed out waiting for TX burst acknowledgements.");
     }
   } catch (...) {
     tx_metadata_t end;
@@ -120,17 +120,17 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
   Sdr sdr(config);
   const double rate = config["RF0"]["tx_rate"].as<double>();
   const double count = rate * chirp.tx_duration;
-  if (!isfinite(count) || count < 1 || count > numeric_limits<streamsize>::max() / sizeof(complex<float>) ||
+  if (!isfinite(count) || count < 1 || count >= static_cast<double>(numeric_limits<streamsize>::max() / sizeof(complex<float>)) ||
       abs(count - round(count)) > 1e-4) {
-    throw invalid_argument("tx_rate * tx_duration must be a positive whole sample count.");
+    throw std::invalid_argument("tx_rate * tx_duration must be a positive whole sample count.");
   }
   if (config["GENERATE"] &&
       abs(config["GENERATE"]["sample_rate"].as<double>() - rate) > rate * 1e-6) {
-    throw invalid_argument("GENERATE.sample_rate must equal RF0.tx_rate.");
+    throw std::invalid_argument("GENERATE.sample_rate must equal RF0.tx_rate.");
   }
   if (config["GPIO"] && (config["CHIRP"]["tr_on_lead"].as<double>(0) != 0 ||
                          config["CHIRP"]["tr_off_trail"].as<double>(0) != 0)) {
-    throw invalid_argument("TX-only GPIO uses ATR; nonzero lead/trail delays are not supported.");
+    throw std::invalid_argument("TX-only GPIO uses ATR; nonzero lead/trail delays are not supported.");
   }
   const auto files = config["FILES"];
   const auto path = root / files["output_dir"].as<string>("data") / files["chirp_loc"].as<string>();
@@ -138,16 +138,16 @@ int UHD_SAFE_MAIN(int argc, char* argv[]) {
   ifstream input(path, ios::binary | ios::ate);
   const auto bytes = static_cast<streamsize>(num_samples * sizeof(complex<float>));
   if (!input || input.tellg() != bytes) {
-    throw runtime_error("Chirp file missing or wrong length: " + path.string() + ". Run run_tx.py --prepare after changing the waveform.");
+    throw std::runtime_error("Chirp file missing or wrong length: " + path.string() + ". Run run_tx.py --prepare after changing the waveform.");
   }
   vector<complex<float>> samples(num_samples);
   input.seekg(0);
-  if (!input.read(reinterpret_cast<char*>(samples.data()), bytes)) throw runtime_error("Could not read chirp samples.");
+  if (!input.read(reinterpret_cast<char*>(samples.data()), bytes)) throw std::runtime_error("Could not read chirp samples.");
   for (const auto sample : samples) {
-    if (!isfinite(sample.real()) || !isfinite(sample.imag())) throw runtime_error("Chirp contains non-finite samples.");
+    if (!isfinite(sample.real()) || !isfinite(sample.imag())) throw std::runtime_error("Chirp contains non-finite samples.");
   }
   if (argc == 4) {
-    if (string(argv[3]) != "--validate") throw invalid_argument("Unknown option.");
+    if (string(argv[3]) != "--validate") throw std::invalid_argument("Unknown option.");
     cout << "[TX] Configuration and " << num_samples << " waveform samples validated; device not opened." << endl;
     return EXIT_SUCCESS;
   }

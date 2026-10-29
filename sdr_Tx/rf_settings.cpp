@@ -24,12 +24,12 @@ void setRfParams(usrp::multi_usrp::sptr usrp, const YAML::Node& rf, size_t chann
     const auto deadline = chrono::steady_clock::now() + chrono::seconds(2);
     while (!usrp->get_tx_sensor("lo_locked", channel).to_bool()) {
       if (chrono::steady_clock::now() >= deadline) {
-        throw runtime_error("Timed out waiting for TX LO lock.");
+        throw std::runtime_error("Timed out waiting for TX LO lock.");
       }
       this_thread::sleep_for(chrono::milliseconds(5));
     }
   }
   if (abs(usrp->get_tx_rate(channel) - rate) > rate * 1e-6) {
-    throw runtime_error("UHD could not provide the requested TX sample rate.");
+    throw std::runtime_error("UHD could not provide the requested TX sample rate.");
   }
 }

@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
   std::signal(SIGINT, stopGps);
   std::signal(SIGTERM, stopGps);
   try {
-    boost::asio::io_service io;
+    boost::asio::io_context io;
     boost::asio::serial_port serial(io, argv[1]);
     using namespace boost::asio;
     serial.set_option(serial_port_base::baud_rate(115200));

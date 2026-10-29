@@ -11,13 +11,13 @@ Sdr::Sdr(const YAML::Node& config) : config(config) {
   size_t parsed = 0;
   channel = stoul(channels, &parsed);
   if (channels.find('-') != string::npos || parsed != channels.size()) {
-    throw invalid_argument("TX-only mode requires a single DEVICE.tx_channels value.");
+    throw std::invalid_argument("TX-only mode requires a single DEVICE.tx_channels value.");
   }
   if (dev["cpu_format"].as<string>("fc32") != "fc32") {
-    throw invalid_argument("TX-only mode currently requires cpu_format: fc32.");
+    throw std::invalid_argument("TX-only mode currently requires cpu_format: fc32.");
   }
   if (!config["RF0"]["transmit"].as<bool>(true)) {
-    throw invalid_argument("RF0.transmit is false; refusing to transmit.");
+    throw std::invalid_argument("RF0.transmit is false; refusing to transmit.");
   }
   const auto rf = config["RF0"];
   const double clock_rate = dev["clk_rate"].as<double>();
@@ -27,7 +27,7 @@ Sdr::Sdr(const YAML::Node& config) : config(config) {
   const double lo_offset = rf["lo_offset"].as<double>(0);
   if (!isfinite(clock_rate) || clock_rate <= 0 || !isfinite(frequency) || frequency <= 0 ||
       !isfinite(gain) || !isfinite(bandwidth) || bandwidth < 0 || !isfinite(lo_offset)) {
-    throw invalid_argument("Invalid TX clock, frequency, gain, bandwidth or LO offset.");
+    throw std::invalid_argument("Invalid TX clock, frequency, gain, bandwidth or LO offset.");
   }
 }
 
@@ -40,7 +40,7 @@ void Sdr::setupUsrp() {
   usrp->set_time_source(dev["time_ref"].as<string>(clock));
   usrp->set_tx_subdev_spec(dev["subdev"].as<string>("A:A"));
   usrp->set_master_clock_rate(dev["clk_rate"].as<double>());
-  if (channel >= usrp->get_tx_num_channels()) throw runtime_error("Invalid TX channel.");
+  if (channel >= usrp->get_tx_num_channels()) throw std::runtime_error("Invalid TX channel.");
   if (clock != "internal") {
     const auto names = usrp->get_mboard_sensor_names(0);
     for (const string sensor : {string("ref_locked"), string("gps_locked")}) {
@@ -48,7 +48,7 @@ void Sdr::setupUsrp() {
       if (find(names.begin(), names.end(), sensor) == names.end()) continue;
       const auto deadline = chrono::steady_clock::now() + chrono::seconds(30);
       while (!usrp->get_mboard_sensor(sensor, 0).to_bool()) {
-        if (chrono::steady_clock::now() >= deadline) throw runtime_error("Timeout waiting for " + sensor);
+        if (chrono::steady_clock::now() >= deadline) throw std::runtime_error("Timeout waiting for " + sensor);
         this_thread::sleep_for(chrono::milliseconds(20));
       }
     }
@@ -59,7 +59,7 @@ void Sdr::setupUsrp() {
     this_thread::sleep_for(chrono::seconds(2));
     if (usrp->get_time_last_pps(0).get_full_secs() !=
         usrp->get_mboard_sensor("gps_time", 0).to_int()) {
-      throw runtime_error("USRP time did not synchronize to GPS time.");
+      throw std::runtime_error("USRP time did not synchronize to GPS time.");
     }
   } else {
     // Relative timed TX needs no PPS edge or one-second startup sleep.
@@ -71,7 +71,7 @@ void Sdr::setupUsrp() {
   if (gpio) {
     const int pin = gpio["pwr_amp_pin"].as<int>(-1);
     if (pin != -1) {
-      if (pin < 2 || pin > 31) throw invalid_argument("Invalid amplifier DB15 pin.");
+      if (pin < 2 || pin > 31) throw std::invalid_argument("Invalid amplifier DB15 pin.");
       const uint32_t mask = uint32_t(1) << (pin - 2);
       const string bank = gpio["gpio_bank"].as<string>("FP0");
       usrp->set_gpio_attr(bank, "CTRL", mask, mask);
