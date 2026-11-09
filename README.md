@@ -37,6 +37,13 @@ For directly interacting with the SDRs, you will need to download the FPGA image
 
 ### Running the code
 
+For a separate B205 receiver and B206 transmitter sharing an external PPS,
+see the [bistatic radar setup](bistatic/README.md). Its independent role
+executables use a one-way RF sync preamble before each configured chirp
+train. B206 only transmits and B205 only receives. Start RX first, then TX
+with `run_bistatic.py`; omit `--loops` for
+continuous repetition. Raspberry Pi / Ubuntu hardware validation is pending.
+
 Everything about the experiment you want to run is defined by a configuration YAML file. You can take a look at the examples in the `config/` directory,
 but you'll likely need to create your own file for whatever you want to do specifically. The `config/default.yaml` file contains comments explaining roughly what each parameter does.
 

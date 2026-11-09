@@ -114,7 +114,7 @@ CHIRP:
                                          #   stopped
     num_presums: 1                       # Number of received pulses to average
                                          #   over before writing to file
-    phase_dithering: true                # Enable phase dithering
+    phase_dithering: false               # Optional; disabled for initial bistatic tests
 ### DURING-RECORDING FILE LOCATIONS
 FILES:
     chirp_loc: *ch_sent                  # Chirp file to transmit
@@ -170,3 +170,10 @@ ENVIRONMENTAL_FACTORS:  #these are the factors that affect the power equation th
     power_loss: 35 #user input in dB
 
     max_rx_gain: 76 #specific to USRP b205 mini
+
+# Used only by run_bistatic.py; the original combined radar ignores this section.
+BISTATIC:
+    control_tx_gain: 0                   # [dB] Sync preamble gain on the TX station only
+    preamble_threshold: 0.85             # Normalized differential PN correlation
+    pps_phase_tolerance: 0.001           # [s] Reject control packets on wrong PPS phase
+    max_clock_error_ppm: 200             # Reject abnormal measured PPS intervals
