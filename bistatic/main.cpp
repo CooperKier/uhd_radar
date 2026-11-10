@@ -61,12 +61,23 @@ SyncPlan synchronizeRx(Radio& radio, PpsClock& clock, const Config& config,
     auto announcement = radio.receiveUntil(radio.device->get_time_now().get_real_secs() + 1, clock, [&](const Received& received) {
       const auto& packet = received.packet;
       if (packet.config != config.fingerprint) {
-        std::cout << "[SYNC] Configuration/waveform mismatch; ignoring sync" << std::endl;
+        std::cout << "[SYNC] Configuration/waveform mismatch; TX fingerprint=" << packet.config
+                  << " RX fingerprint=" << config.fingerprint << "; ignoring sync" << std::endl;
         return false;
       }
       Edge anchor = clock.before(received.time);
       double phase = (received.time - anchor.time) / clock.ratio();
-      return validAnnouncement(packet, config.fingerprint, phase, config.tolerance, previous);
+      if (std::abs(phase - kSyncPhases[packet.repetition]) > config.tolerance) {
+        std::cout << "[SYNC] Rejected PPS phase: measured_ms=" << phase * 1000
+                  << " expected_ms=" << kSyncPhases[packet.repetition] * 1000
+                  << " tolerance_ms=" << config.tolerance * 1000
+                  << "; verify both radios share aligned PPS edges" << std::endl;
+        return false;
+      }
+      if (validAnnouncement(packet, config.fingerprint, phase, config.tolerance, previous)) return true;
+      std::cout << "[SYNC] Rejected duplicate or stale packet: session=" << packet.session
+                << " cycle=" << packet.cycle << " attempt=" << packet.attempt << std::endl;
+      return false;
     });
     if (!announcement) continue;
     Edge anchor = clock.before(announcement->time);

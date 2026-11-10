@@ -81,8 +81,11 @@ void testModem() {
         if (i >= padding && i < padding + signal.size()) channel[i] = signal[i - padding] * std::polar(1.f, float(1.3 + 2 * kPi * carrier * i / kControlRate));
         channel[i] += Sample(noise(generator), noise(generator));
       }
-      auto found = detect(channel);
+      DetectionStats stats;
+      auto found = detect(channel, 0.85, &stats);
       expect(found && sameAttempt(found->packet, packet), "Decode RF with unknown phase, noise, carrier offset and arbitrary sample alignment");
+      expect(stats.decoded_packets == 1 && stats.preamble_hits > 0 && stats.best_score >= 0.85,
+             "Diagnostic decoder path preserves decoding across noise, carrier offset and sample alignment");
       expect(std::abs(double(found->sample) - double(padding)) <= 8, "Preamble timestamp within half a control symbol");
       expect(std::abs(found->carrier_hz - carrier) < 500, "Carrier-offset estimate");
     }
@@ -90,7 +93,10 @@ void testModem() {
   auto damaged = modulate(packet);
   size_t corrupt_symbol = kPreambleSymbols + 100;
   for (size_t i = corrupt_symbol * kSamplesPerSymbol; i < (corrupt_symbol + 1) * kSamplesPerSymbol; ++i) damaged[i] = -damaged[i];
-  expect(!detect(damaged), "Corrupted RF payload must not pass CRC");
+  DetectionStats damaged_stats;
+  expect(!detect(damaged, 0.85, &damaged_stats), "Corrupted RF payload must not pass CRC");
+  expect(damaged_stats.invalid_headers > 0 && damaged_stats.decoded_packets == 0,
+         "Diagnostics distinguish a received preamble with an invalid payload from a decoded packet");
   std::vector<Sample> random_noise(packetSamples() * 3);
   for (auto& sample : random_noise) sample = Sample(noise(generator), noise(generator));
   expect(!detect(random_noise), "Noise must not establish synchronization");

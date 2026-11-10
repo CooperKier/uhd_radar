@@ -47,10 +47,19 @@ struct Detection {
   double score;
 };
 
+/** Decoder work counters; receive-buffer overlap can revisit a candidate. */
+struct DetectionStats {
+  double best_score = 0;
+  uint64_t preamble_hits = 0;
+  uint64_t invalid_headers = 0;
+  uint64_t decoded_packets = 0;
+};
+
 /** Search with differential PN correlation; CRC resolves false correlations.
  * The unambiguous carrier-offset range is +/-31.25 kHz at the fixed control rate.
  */
-inline std::optional<Detection> detect(const std::vector<Sample>& samples, double threshold = 0.85) {
+inline std::optional<Detection> detect(const std::vector<Sample>& samples, double threshold = 0.85,
+                                       DetectionStats* stats = nullptr) {
   if (samples.size() < packetSamples()) return std::nullopt;
   std::vector<Sample> sums(samples.size() - kSamplesPerSymbol + 1);
   Sample sum(0, 0);
@@ -70,7 +79,9 @@ inline std::optional<Detection> detect(const std::vector<Sample>& samples, doubl
       energy += std::abs(product);
     }
     double score = energy > 1e-12 ? std::abs(correlation) / energy : 0;
+    if (stats) stats->best_score = std::max(stats->best_score, score);
     if (score < threshold) continue;
+    if (stats) ++stats->preamble_hits;
     auto correction = std::polar(1.f, -std::arg(correlation));
     std::vector<uint8_t> bytes(kPacketBytes, 0);
     Sample previous = sums[start + (kPreambleSymbols - 1) * kSamplesPerSymbol];
@@ -80,9 +91,12 @@ inline std::optional<Detection> detect(const std::vector<Sample>& samples, doubl
       previous = current;
     }
     try {
-      return Detection{decodePacket(bytes), start,
+      auto packet = decodePacket(bytes);
+      if (stats) ++stats->decoded_packets;
+      return Detection{packet, start,
                        std::arg(correlation) * kControlRate / (2 * kPi * kSamplesPerSymbol), score};
     } catch (const std::invalid_argument&) {
+      if (stats) ++stats->invalid_headers;
       // Continue searching after a false preamble or corrupt header.
     }
   }

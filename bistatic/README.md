@@ -233,6 +233,44 @@ cmake --build bistatic/build-tests --parallel 2
 ctest --test-dir bistatic/build-tests --output-on-failure
 ```
 
+## Troubleshooting RX waiting after PPS acquisition
+
+`[PPS] Acquired` confirms local PPS acquisition. Radar recording starts only
+after RX accepts a valid RF packet. Seeing RF power on an analyzer does not
+establish that RX can decode that packet. Start RX before TX and keep TX
+repeating while diagnosing the link.
+
+Both roles print `[CONTROL]` with the actual RF center frequency, control
+sample rate, gain and antenna. Verify that the centers agree and that the
+RF path reaches the selected RX antenna. RX prints `[SYNC RX] Listening`
+when continuous control reception starts, then interval statistics every
+five seconds while waiting:
+
+* `samples`, `timeouts`, `overflows` and `timestamp_gaps` describe control
+  streaming. Nonzero sample counts establish sample flow, including noise;
+  they do not establish packet reception. Frequent overflows or gaps can
+  prevent decoding. Zero samples with repeated timeouts indicates a stream
+  problem rather than simply weak RF.
+* `peak_dbfs` is peak normalized complex IQ power, not RF input dBm.
+  `near_fullscale` counts samples with I or Q magnitude >=0.98; sustained
+  counts suggest possible clipping, including during stronger radar bursts.
+* `best_corr` is the largest preamble score searched during the interval,
+  not SNR or a probability. `preamble_hits` counts threshold crossings;
+  `invalid_headers` counts candidates rejected by CRC/header validation.
+  Overlapping buffers can revisit candidates, so these are decoder-work
+  counts, not counts of distinct transmitted packets.
+* `decoded` counts valid packet decodes. Each decode also prints its cycle,
+  copy number, correlation and estimated carrier offset. Subsequent sync
+  messages explicitly identify configuration mismatches, PPS-phase rejection
+  with measured/expected phases, or duplicate/stale packets.
+
+Compare both printed experiment fingerprints and regenerate the chirp with
+`--prepare` after waveform changes. For phase rejections, verify that both
+REF inputs receive aligned physical PPS edges; matching 1 Hz frequencies
+from independent free-running generators are insufficient. Preserve the
+packet and timing checks while locating the RF, streaming or timing fault.
+These diagnostics also appear in the runner's `radio.log`.
+
 ## Testing noisy preambles
 
 The detector averages samples within each control symbol and correlates the
