@@ -173,7 +173,7 @@ ENVIRONMENTAL_FACTORS:  #these are the factors that affect the power equation th
 
 # Used only by run_bistatic.py; the original combined radar ignores this section.
 BISTATIC:
-    control_tx_gain: 35                   # [dB] Sync preamble gain on the TX station only
+    control_tx_gain: 65                   # [dB] Sync preamble gain on the TX station only
     preamble_threshold: 0.85             # Normalized differential PN correlation
     pps_phase_tolerance: 0.001           # [s] Reject control packets on wrong PPS phase
     max_clock_error_ppm: 200             # Reject abnormal measured PPS intervals
