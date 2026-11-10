@@ -30,6 +30,8 @@ def load_radar_data(prefix, load_start_seconds=0, max_seconds_to_load=60*100, ma
     log_file = prefix + "_uhd_stdout.log"
     
     config = load_config(prefix)
+    if 'CAPTURE' in config and not config['CAPTURE'].get('complete', False):
+        raise ValueError("Bistatic capture is incomplete")
     rx_len_samples = int(config['CHIRP']['rx_duration'] * config['GENERATE']['sample_rate'])
     
     max_file_size_bytes = rx_len_samples*int(1/config['CHIRP']['pulse_rep_int'])*8*max_seconds_to_load
@@ -85,6 +87,8 @@ def load_radar_data(prefix, load_start_seconds=0, max_seconds_to_load=60*100, ma
                     print(f"Full message: {line}")
             if ("[START]" in line) or ("Scheduling chirp 0 RX" in line):
                 start_timestamp = float(re.search("(?:\[)([\d]+\.[\d]+)", line).groups()[0])
+    elif 'CAPTURE' in config:
+        errors = {}  # Bistatic captures fail on stream errors instead of saving corrupt windows.
     else:
         print(f"WARNING: No log file found. This is fine, but checks for error codes will be disabled.")
         print(f"(Looking for a log file in: {log_file})")

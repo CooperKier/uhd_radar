@@ -38,8 +38,8 @@ For directly interacting with the SDRs, you will need to download the FPGA image
 ### Running the code
 
 For a separate B205 receiver and B206 transmitter sharing an external PPS,
-see the [bistatic radar setup](bistatic/README.md). Its independent role
-executables use a one-way RF sync preamble before each configured chirp
+see the [bistatic radar setup](bistatic/README.md). One executable runs either
+role and uses a one-way RF sync preamble before each configured chirp
 train. B206 only transmits and B205 only receives. Start RX first, then TX
 with `run_bistatic.py`; omit `--loops` for
 continuous repetition. Raspberry Pi / Ubuntu hardware validation is pending.

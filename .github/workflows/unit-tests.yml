@@ -5,6 +5,38 @@ on:
   pull_request:
 
 jobs:
+  bistatic-testing:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set Up Bistatic Test Environment
+        uses: conda-incubator/setup-miniconda@v2
+        with:
+          activate-environment: bistatic-tests
+          python-version: "3.11"
+          channels: conda-forge
+          channel-priority: strict
+          auto-activate-base: false
+
+      - name: Install Bistatic Test Dependencies
+        run: conda install --yes cmake make cxx-compiler libboost-devel 'uhd>=4.9,<5' yaml-cpp numpy scipy matplotlib ruamel.yaml
+
+      - name: Build Bistatic Executable and C++ Tests
+        run: |
+          cmake -S bistatic -B bistatic/build -DBISTATIC_BUILD_RADIO=ON -DBUILD_TESTING=ON
+          cmake --build bistatic/build --parallel 2 --target bistatic test_bistatic_protocol
+
+      - name: Run Bistatic C++ Tests
+        run: ctest --test-dir bistatic/build --output-on-failure --no-tests=error
+
+      - name: Run Bistatic Runner and Native Configuration Tests
+        run: python -m unittest discover -s tests -p test_run_bistatic.py -v
+
   auto-testing:
     runs-on: ubuntu-latest
 

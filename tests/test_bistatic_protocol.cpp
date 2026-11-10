@@ -1,6 +1,5 @@
 /** @file Hardware-free RF packet, synchronization rejection and pulse-stream tests. */
 #include "train.hpp"
-#include "rx_timeline.hpp"
 #include <iostream>
 #include <limits>
 #include <random>
@@ -262,7 +261,7 @@ void testRxTimelineRejection() {
     try { timeline.accept(true, time, 100); } catch (const std::runtime_error&) { rejected = true; }
     expect(rejected && timeline.receivedSamples() == 0, "Reject stale, too-late or invalid first timestamps");
   }
-  for (bool has_time : {false, true}) for (double gap : {-3., 3., 3661.}) {
+  for (bool has_time : {false, true}) for (double gap : {-3., -2., -1.5, -1., 1., 1.5, 2., 3., 3661.}) {
     RxTimeline timeline(11, rate, 1232);
     double first = timeline.commandTime() + 7.25 / rate;
     timeline.accept(true, first, 100);
@@ -270,6 +269,23 @@ void testRxTimelineRejection() {
     try { timeline.accept(has_time, first + (100 + gap) / rate, 100); }
     catch (const std::runtime_error&) { rejected = true; }
     expect(rejected && timeline.receivedSamples() == 100, "Reject later missing timestamps, gaps and out-of-order data even during lead-in");
+  }
+  // A gap during a radar window must fail before it could complete the output.
+  for (double rate : {1e6, 14e6, 56e6}) for (double gap : {-1., 1.}) {
+    RxTimeline timeline(11, rate, 10);
+    timeline.accept(true, timeline.commandTime(), timeline.guardSamples() + 5);
+    bool rejected = false;
+    try { timeline.accept(true, timeline.expectedTime() + gap / rate, 5); }
+    catch (const std::runtime_error&) { rejected = true; }
+    expect(rejected && !timeline.complete(), "Single missing or repeated sample cannot produce a complete capture");
+  }
+  // Double conversion at later local epochs must still allow contiguous timestamps.
+  for (double desired : {11., 123456.}) for (double rate : {1e6, 14e6, 56e6}) {
+    RxTimeline timeline(desired, rate, 10);
+    double first = timeline.commandTime() + 7.25 / rate;
+    timeline.accept(true, first, 100);
+    timeline.accept(true, first + 100 / rate, 100);
+    expect(timeline.receivedSamples() == 200, "Contiguous timestamps tolerate double-precision rounding");
   }
 }
 

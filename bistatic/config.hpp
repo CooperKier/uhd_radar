@@ -1,11 +1,10 @@
 /** @file Validate the existing experiment YAML and fingerprint its actual waveform. */
 #pragma once
-#include "modem.hpp"
+#include "protocol.hpp"
 #include <yaml-cpp/yaml.h>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <string>
 
 namespace bistatic {
@@ -17,21 +16,39 @@ inline double positive(const YAML::Node& node, const std::string& name) {
   return value;
 }
 
+/** Read required text before opening hardware; empty device arguments permit discovery. */
+inline std::string requiredText(const YAML::Node& node, const std::string& name, bool allow_empty = false) {
+  if (!node || !node.IsScalar()) throw std::invalid_argument(name + " must be a string");
+  auto value = node.as<std::string>();
+  if (!allow_empty && value.find_first_not_of(" \t\r\n") == std::string::npos)
+    throw std::invalid_argument(name + " must not be empty");
+  return value;
+}
+
 /** Preserve fc32 IQ, optionally averaging consecutive, complete pulse windows. */
 struct Config {
   YAML::Node yaml;
-  fs::path root;
   double rate, clock_rate, pri, offset, tx_lead, frequency;
+  std::string device_args, subdev, wire_format, antenna, tuning_args;
+  double gain, lo_offset, bandwidth;
   double threshold = 0.85, tolerance = 0.001, max_ppm = 200, control_gain = 0;
   uint64_t pulses, presums, rx_samples, tx_samples, fingerprint = 14695981039346656037ull;
+  const bool transmitting;
   bool dither;
   std::vector<Sample> chirp;
 
-  Config(const fs::path& filename, const fs::path& repository, const std::string& role)
-      : yaml(YAML::LoadFile(filename.string())), root(repository) {
+  Config(const fs::path& filename, const fs::path& repository, const std::string& role,
+         const std::string& override_args = "")
+      : yaml(YAML::LoadFile(filename.string())), transmitting(role == "tx") {
     if (role != "tx" && role != "rx") throw std::invalid_argument("Unknown radio role");
-    bool transmitting = role == "tx";
     auto gen = yaml["GENERATE"], device = yaml["DEVICE"], rf = yaml["RF0"], c = yaml["CHIRP"];
+    device_args = override_args.empty() ? requiredText(device["device_args"], "DEVICE.device_args", true) : override_args;
+    subdev = requiredText(device["subdev"], "DEVICE.subdev");
+    wire_format = requiredText(device["otw_format"], "DEVICE.otw_format");
+    if (wire_format != "sc16" && wire_format != "sc12" && wire_format != "sc8")
+      throw std::invalid_argument("DEVICE.otw_format must be sc16, sc12 or sc8 in B2xx mode");
+    antenna = requiredText(rf[transmitting ? "tx_ant" : "rx_ant"], transmitting ? "RF0.tx_ant" : "RF0.rx_ant");
+    tuning_args = rf["tuning_args"] ? requiredText(rf["tuning_args"], "RF0.tuning_args", true) : "";
     rate = positive(gen["sample_rate"], "GENERATE.sample_rate");
     clock_rate = positive(device["clk_rate"], "DEVICE.clk_rate");
     frequency = positive(rf["freq"], "RF0.freq");
@@ -57,9 +74,12 @@ struct Config {
       throw std::invalid_argument("Bistatic mode needs one active channel (0) and cpu_format fc32");
     if (device["clk_ref"].as<std::string>() != "internal") throw std::invalid_argument("Shared-PPS mode uses clk_ref: internal and a separate external PPS time source");
     if (transmitting && !rf["transmit"].as<bool>(true)) throw std::invalid_argument("RF0.transmit must be true on the TX station");
-    if (!std::isfinite(rf[transmitting ? "tx_gain" : "rx_gain"].as<double>())) throw std::invalid_argument("Active RF gain must be finite");
-    for (const auto& key : {"lo_offset", "bw"})
-      if (!std::isfinite(rf[key].as<double>(0))) throw std::invalid_argument(std::string("RF0.") + key + " must be finite");
+    gain = rf[transmitting ? "tx_gain" : "rx_gain"].as<double>();
+    lo_offset = rf["lo_offset"].as<double>(0);
+    bandwidth = rf["bw"].as<double>(0);
+    if (!std::isfinite(gain)) throw std::invalid_argument("Active RF gain must be finite");
+    if (!std::isfinite(lo_offset)) throw std::invalid_argument("RF0.lo_offset must be finite");
+    if (!std::isfinite(bandwidth) || bandwidth < 0) throw std::invalid_argument("RF0.bw must be finite and nonnegative");
     if (!std::isfinite(rf[transmitting ? "tx_rate" : "rx_rate"].as<double>()) ||
         std::abs(rf[transmitting ? "tx_rate" : "rx_rate"].as<double>() - rate) > 0.01)
       throw std::invalid_argument("GENERATE and the active RF0 sample rate must agree");
@@ -88,7 +108,11 @@ struct Config {
     if (!std::isfinite(threshold) || threshold < 0.6 || threshold > 1 || !std::isfinite(tolerance) || tolerance <= 0 || tolerance > 0.1 ||
         !std::isfinite(max_ppm) || max_ppm <= 0 || max_ppm > 1000 || !std::isfinite(control_gain))
       throw std::invalid_argument("Invalid BISTATIC control parameters");
-    fs::path waveform = root / yaml["FILES"]["output_dir"].as<std::string>("data") / yaml["FILES"]["chirp_loc"].as<std::string>();
+    auto output_dir = repository / yaml["FILES"]["output_dir"].as<std::string>("data");
+    fs::path waveform = output_dir / requiredText(yaml["FILES"]["chirp_loc"], "FILES.chirp_loc");
+    auto generated_waveform = output_dir / requiredText(gen["out_file"], "GENERATE.out_file");
+    if (fs::weakly_canonical(waveform) != fs::weakly_canonical(generated_waveform))
+      throw std::invalid_argument("GENERATE.out_file and FILES.chirp_loc must identify the same waveform; refusing a stale chirp");
     if (!fs::is_regular_file(waveform) || fs::file_size(waveform) != tx_samples * sizeof(Sample))
       throw std::invalid_argument("Missing or wrong-size waveform; run --prepare after changing configuration");
     chirp.resize(tx_samples);

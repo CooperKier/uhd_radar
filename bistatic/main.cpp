@@ -1,7 +1,6 @@
 /** @file One-way bistatic radar: shared PPS, RF sync, finite chirp trains, repeated cycles. */
 #include "radio.hpp"
 #include "train.hpp"
-#include "rx_timeline.hpp"
 #include <csignal>
 #include <iomanip>
 #include <random>
@@ -40,12 +39,12 @@ struct SyncPlan {
 
 /** Broadcast redundant sync copies and proceed independently of receiver readiness. */
 SyncPlan synchronizeTx(Radio& radio, PpsClock& clock, const Config& config,
-                       uint64_t session, uint64_t cycle, uint64_t& attempt) {
+                       uint64_t session, uint64_t cycle) {
   Edge anchor = clock.latest();
   double ratio = clock.ratio();
   if (radio.device->get_time_now().get_real_secs() > anchor.time + 0.10 * ratio)
     anchor = clock.waitEdge(anchor.sequence + 1);
-  Packet announcement{session, cycle, ++attempt, config.fingerprint};
+  Packet announcement{session, cycle, cycle, config.fingerprint};
   std::cout << "[SYNC] Broadcasting cycle=" << cycle << " target PPS edge=" << anchor.sequence + kLeadEdges << std::endl;
   for (size_t repetition = 0; repetition < kSyncPhases.size(); ++repetition) {
     announcement.repetition = static_cast<uint8_t>(repetition);
@@ -57,9 +56,8 @@ SyncPlan synchronizeTx(Radio& radio, PpsClock& clock, const Config& config,
 /** RX maps the preamble to its own preceding physical edge; integer epochs may differ. */
 SyncPlan synchronizeRx(Radio& radio, PpsClock& clock, const Config& config,
                        std::optional<Packet>& previous) {
-  radio.startReceive();
   while (!interrupted) {
-    auto announcement = radio.receiveUntil(radio.device->get_time_now().get_real_secs() + 1, clock, [&](const Received& received) {
+    auto announcement = radio.receiveControl(clock, [&](const Received& received) {
       const auto& packet = received.packet;
       if (packet.config != config.fingerprint) {
         std::cout << "[SYNC] Configuration/waveform mismatch; TX fingerprint=" << packet.config
@@ -80,17 +78,16 @@ SyncPlan synchronizeRx(Radio& radio, PpsClock& clock, const Config& config,
                 << " cycle=" << packet.cycle << " attempt=" << packet.attempt << std::endl;
       return false;
     });
-    if (!announcement) continue;
-    Edge anchor = clock.before(announcement->time);
+    Edge anchor = clock.before(announcement.time);
     double ratio = clock.ratio();
     if (radio.device->get_time_now().get_real_secs() >= anchor.time + (kLeadEdges - 0.5) * ratio) {
       std::cout << "[SYNC] Announcement decoded too late to arm; waiting for next cycle" << std::endl;
       continue;
     }
-    previous = announcement->packet;
+    previous = announcement.packet;
     radio.stopReceive();
     std::cout << "[SYNC] Sync accepted; target PPS edge=" << anchor.sequence + kLeadEdges << std::endl;
-    return {announcement->packet, anchor.sequence + kLeadEdges, announcement->carrier_hz, announcement->score};
+    return {announcement.packet, anchor.sequence + kLeadEdges, announcement.carrier_hz, announcement.score};
   }
   throw std::runtime_error("Interrupted");
 }
@@ -147,7 +144,7 @@ void receiveTrain(Radio& radio, PpsClock& clock, const Config& config, double fi
   metadata["rx_guard_samples"] = timeline.guardSamples();
   metadata["requested_stream_samples"] = total;
   std::cout << "[RADAR RX] rate_sps=" << config.rate << " wire_format="
-            << config.yaml["DEVICE"]["otw_format"].as<std::string>()
+            << config.wire_format
             << " requested_samples=" << total << " max_packet_samples=" << radio.rx->get_max_num_samps()
             << " num_presums=" << config.presums << " capture_mode=" << (continuous ? "continuous" : "finite")
             << " first_time=" << std::to_string(first_time) << std::endl;
@@ -226,17 +223,19 @@ void runCycle(const std::string& role, Radio& radio, PpsClock& clock, const Conf
   std::ostringstream name;
   name << "cycle_" << std::setfill('0') << std::setw(6) << completed + 1;
   auto prefix = directory / name.str();
-  auto report_path = fs::path(prefix.string() + "_capture.yaml");
+  auto report_path = fs::path(prefix.string() + "_config.yaml");
   auto partial = fs::path(prefix.string() + "_rx_samps.bin.partial");
   auto final = fs::path(prefix.string() + "_rx_samps.bin");
   if (fs::exists(report_path) || fs::exists(partial) || fs::exists(final)) throw std::runtime_error("Refusing to overwrite an existing cycle");
-  YAML::Node report;
+  YAML::Node document = YAML::Clone(config.yaml);
+  document["DEVICE"]["device_args"] = config.device_args;
+  document["CAPTURE"] = YAML::Node(YAML::NodeType::Map);
+  auto report = document["CAPTURE"];
   report["complete"] = false;
   report["role"] = role;
   report["session"] = plan.announcement.session;
   report["cycle"] = plan.announcement.cycle;
   report["attempt"] = plan.announcement.attempt;
-  report["sync_mode"] = "one_way_rf";
   report["protocol_version"] = 2;
   report["config_fingerprint"] = config.fingerprint;
   report["local_target_pps_edge"] = plan.target_edge;
@@ -245,15 +244,9 @@ void runCycle(const std::string& role, Radio& radio, PpsClock& clock, const Conf
     report["control_carrier_offset_hz"] = plan.carrier_hz;
     report["control_correlation"] = plan.correlation;
   }
-  report["carrier_correction_applied"] = false;
-  report["coherent_phase_lock"] = false;
-  report["phase_dithering_removed"] = role == "rx" && config.dither;
   report["saved_pulses"] = 0;
   report["received_pulses"] = 0;
-  report["num_presums"] = config.presums;
-  report["expected_records"] = config.pulses / config.presums;
-  saveYaml(report_path, report);
-  saveYaml(prefix.string() + "_config.yaml", config.yaml);
+  saveYaml(report_path, document);
   try {
     radio.radar();
     Edge edge = clock.waitEdge(plan.target_edge);
@@ -264,13 +257,7 @@ void runCycle(const std::string& role, Radio& radio, PpsClock& clock, const Conf
     report["clock_ratio"] = ratio;
     report["first_rx_device_time"] = first_rx;
     report["first_tx_device_time"] = first_tx;
-    report["sample_rate"] = config.rate;
-    report["samples_per_pulse"] = config.rx_samples;
-    report["num_pulses"] = config.pulses;
-    saveYaml(report_path, report);
-    double host_time = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-    std::ofstream log(prefix.string() + "_uhd_stdout.log");
-    log << '[' << std::fixed << std::setprecision(6) << host_time << "]\t[START] Beginning main loop\n";
+    saveYaml(report_path, document);
     std::cout << "[RADAR] " << role << " cycle=" << plan.announcement.cycle << " clock_error_ppm=" << (ratio - 1) * 1e6 << std::endl;
     if (role == "tx") {
       transmitTrain(radio, clock, config, first_tx, ratio);
@@ -286,28 +273,30 @@ void runCycle(const std::string& role, Radio& radio, PpsClock& clock, const Conf
       fs::rename(partial, final);
     }
     report["complete"] = true;
-    saveYaml(report_path, report);
+    saveYaml(report_path, document);
     std::cout << "[COMPLETE] " << prefix.string() << std::endl;
   } catch (const std::exception& error) {
+    report["complete"] = false;
+    if (role == "rx" && fs::exists(final)) fs::rename(final, partial);
     report["error"] = error.what();
-    saveYaml(report_path, report);
+    saveYaml(report_path, document);
     throw;
   }
 }
 }  // namespace bistatic
 
-/** Two independently built role executables share the same validated protocol implementation. */
+/** One executable runs the selected TX or RX station. */
 int main(int argc, char* argv[]) {
   using namespace bistatic;
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
   try {
-    if (argc < 4) throw std::invalid_argument("Usage: bistatic_rx|bistatic_tx CONFIG ROOT OUTPUT [--loops N] [--device-args ARGS] [--validate]");
-    std::string role = BISTATIC_ROLE;
+    if (argc < 5) throw std::invalid_argument("Usage: bistatic rx|tx CONFIG ROOT OUTPUT [--loops N] [--device-args ARGS] [--validate]");
+    std::string role = argv[1];
     uint64_t limit = 0;
     std::string device_args;
     bool validate = false;
-    for (int i = 4; i < argc; ++i) {
+    for (int i = 5; i < argc; ++i) {
       std::string option = argv[i];
       if (option == "--validate") validate = true;
       else if (option == "--loops" && i + 1 < argc) {
@@ -318,15 +307,15 @@ int main(int argc, char* argv[]) {
       } else if (option == "--device-args" && i + 1 < argc) device_args = argv[++i];
       else throw std::invalid_argument("Unknown or incomplete option: " + option);
     }
-    Config config(fs::absolute(argv[1]), fs::absolute(argv[2]), role);
+    Config config(fs::absolute(argv[2]), fs::absolute(argv[3]), role, device_args);
     std::cout << "[CONFIG] " << role << " fingerprint=" << config.fingerprint << " pulses/cycle=" << config.pulses
               << " num_presums=" << config.presums << " records/cycle=" << config.pulses / config.presums << std::endl;
     if (role == "rx" && config.presums > 1)
       std::cout << "[PRESUM] Averaging complex IQ without carrier-phase correction; RF phase drift can cancel the return" << std::endl;
     if (validate) return 0;
-    fs::path output = fs::absolute(argv[3]);
+    fs::path output = fs::absolute(argv[4]);
     if (!fs::is_directory(output)) throw std::invalid_argument("Runner must create a new output directory before launch");
-    Radio radio(config, device_args, role);
+    Radio radio(config);
     PpsClock clock(radio.device, config.max_ppm);
     std::cout << "[PPS] Waiting for three physical 1 Hz edges" << std::endl;
     clock.waitEdge(3, 6);
@@ -334,10 +323,10 @@ int main(int argc, char* argv[]) {
     std::random_device random;
     uint64_t session = (uint64_t(random()) << 32) ^ random();
     if (!session) session = 1;
-    uint64_t completed = 0, attempt = 0;
+    uint64_t completed = 0;
     std::optional<Packet> previous;
     while (!interrupted && (!limit || completed < limit)) {
-      SyncPlan plan = role == "tx" ? synchronizeTx(radio, clock, config, session, completed + 1, attempt)
+      SyncPlan plan = role == "tx" ? synchronizeTx(radio, clock, config, session, completed + 1)
                                    : synchronizeRx(radio, clock, config, previous);
       runCycle(role, radio, clock, config, plan, output, completed);
       ++completed;

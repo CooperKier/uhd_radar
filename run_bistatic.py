@@ -1,7 +1,6 @@
 """Prepare or run the B205 RX-only / B206 TX-only shared-PPS radar."""
 import argparse
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import signal
@@ -23,7 +22,7 @@ def positiveLoops(value):
 
 def commandFor(role, config, output, loops=None, device_args=None, validate=False):
     """Construct an explicit role command without editing the shared experiment YAML."""
-    command = [str(BUILD / f"bistatic_{role}"), str(config), str(ROOT), str(output)]
+    command = [str(BUILD / "bistatic"), role, str(config), str(ROOT), str(output)]
     if loops is not None:
         command.extend(["--loops", str(loops)])
     if device_args:
@@ -33,16 +32,16 @@ def commandFor(role, config, output, loops=None, device_args=None, validate=Fals
     return command
 
 
-def prepare(role, config):
-    """Compile one role, regenerate its chirp, and validate without opening hardware."""
+def prepare(role, config, device_args=None):
+    """Build, regenerate the chirp, and validate the selected role without hardware."""
     subprocess.run(["cmake", "-S", str(ROOT / "bistatic"), "-B", str(BUILD),
                     "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON", "-DBISTATIC_BUILD_RADIO=ON"], check=True)
     subprocess.run(["cmake", "--build", str(BUILD), "--parallel", "2",
-                    "--target", f"bistatic_{role}", "test_bistatic_protocol"], check=True)
+                    "--target", "bistatic", "test_bistatic_protocol"], check=True)
     subprocess.run(["ctest", "--test-dir", str(BUILD), "--output-on-failure"], check=True)
     from preprocessing.generate_chirp import generate_from_yaml_filename
     generate_from_yaml_filename(str(config))
-    subprocess.run(commandFor(role, config, ROOT / "data", validate=True), check=True)
+    subprocess.run(commandFor(role, config, ROOT / "data", device_args=device_args, validate=True), check=True)
 
 
 def runStation(role, config, output, loops=None, device_args=None):
@@ -50,12 +49,8 @@ def runStation(role, config, output, loops=None, device_args=None):
     command = commandFor(role, config, output, loops, device_args)
     subprocess.run(commandFor(role, config, output, loops, device_args, validate=True), check=True)
     output.mkdir(parents=True, exist_ok=False)
-    # Preserve bytes, including aliases/comments, as the top-level experiment record.
-    (output / "config.yaml").write_bytes(config.read_bytes())
     process = None
     stopped = False
-    started = datetime.now(timezone.utc).isoformat()
-    result = 1
     kill_timer = None
 
     def signalProcess(signum):
@@ -79,8 +74,9 @@ def runStation(role, config, output, loops=None, device_args=None):
     print("Keep the shared 1 Hz PPS running. RF sync and radar travel from TX to RX only.", flush=True)
     try:
         with (output / "radio.log").open("w") as log:
+            log.write(f"[RUN] role={role} config={config} loops={loops} device_args_override={device_args!r}\n")
             if stopped:
-                result = 130
+                log.write("[EXIT] returncode=130\n")
                 return 130
             process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, bufsize=1, start_new_session=True)
@@ -93,6 +89,8 @@ def runStation(role, config, output, loops=None, device_args=None):
             result = process.wait()
             if stopped:
                 result = 130
+            log.write(f"[EXIT] returncode={result}\n")
+            return result
     finally:
         if kill_timer is not None:
             kill_timer.cancel()
@@ -106,20 +104,15 @@ def runStation(role, config, output, loops=None, device_args=None):
                     process.wait()
             if process.stdout:
                 process.stdout.close()
-        (output / "run.json").write_text(json.dumps({
-            "role": role, "config": str(config), "device_args_override": device_args,
-            "loops": loops, "started_utc": started, "finished_utc": datetime.now(timezone.utc).isoformat(),
-            "returncode": result,
-        }, indent=2) + "\n")
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
-    return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("role", choices=("rx", "tx"))
-    parser.add_argument("config", nargs="?", type=Path, default=ROOT / "config" / "default.yaml")
+    parser.add_argument("config", nargs="?", type=Path, default=ROOT / "config" / "bistatic.yaml",
+                        help="Experiment config (default: config/bistatic.yaml)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare", action="store_true", help="Build, generate, test and validate without hardware")
     mode.add_argument("--validate", action="store_true", help="Validate cached waveform/config without hardware")
@@ -132,9 +125,9 @@ def main(argv=None):
         parser.error(f"Missing config: {config}")
     try:
         if args.prepare:
-            prepare(args.role, config)
+            prepare(args.role, config, args.device_args)
             return 0
-        binary = BUILD / f"bistatic_{args.role}"
+        binary = BUILD / "bistatic"
         if not binary.is_file():
             raise RuntimeError(f"Missing {binary.name}; run --prepare first")
         output = (args.output_dir or ROOT / "data" / datetime.now(timezone.utc).strftime(f"bistatic_{args.role}_%Y%m%dT%H%M%S_%fZ")).resolve()
