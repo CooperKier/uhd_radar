@@ -206,13 +206,29 @@ from postprocessing.processing import load_radar_data
 slow_time, sample_rate, iq = load_radar_data("data/YOUR_RX_RUN/cycle_000001")
 ```
 
-At 56 MS/s the code continuously streams each approximately two-second
-train and extracts only the configured RX windows. Memory is bounded by
+At 56 MS/s the code streams the configured train and extracts only the
+configured RX windows. Memory is bounded by
 stream buffers; Pi/USB throughput and disk performance must be measured.
 Presumming reduces disk output, not the USB sample rate or capture duration.
 Trains exceeding the B2xx finite-command limit of 268,435,455 samples use a
 timed continuous command, read exactly the required number of samples, and then
 stop and drain RX. Shorter trains retain the finite command.
+
+RX starts streaming 1 ms before the requested first radar window, with an
+additional trailing guard. The hardware timestamp describes the
+[first returned sample](https://files.ettus.com/manual/structuhd_1_1rx__metadata__t.html),
+which may differ from the command time. RX uses that timestamp to discard
+the lead-in and align the first radar window to the nearest sample (within
+half a sample of the requested time). No fixed device-latency correction is
+assumed. A first timestamp outside the lead-in, missing timestamps, overflows
+or later timestamp discontinuities still fail the capture.
+
+The first `[RADAR RX]` alignment report includes `startup_offset_samples`,
+`discarded_leading_samples` and `window_alignment_error_samples`. The capture
+report retains both the requested `first_rx_device_time` and the selected
+`actual_first_rx_device_time`, plus the command time and first stream timestamp.
+Only the intended radar windows enter presumming; guard samples are omitted.
+
 This mode requires fc32 CPU samples, active channel 0, finite positive
 `num_pulses`, a positive `num_presums` that divides `num_pulses`, no file
 splitting and disabled amplifier GPIO.

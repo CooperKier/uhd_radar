@@ -1,6 +1,8 @@
 /** @file Hardware-free RF packet, synchronization rejection and pulse-stream tests. */
 #include "train.hpp"
+#include "rx_timeline.hpp"
 #include <iostream>
+#include <limits>
 #include <random>
 #include <string>
 
@@ -208,6 +210,69 @@ void testPresumming() {
   });
 }
 
+/** Preserve pulse locations when the actual stream start consumes part of the lead-in. */
+void testGuardedRxWindows() {
+  const double rate = 56e6, desired = 11.00000020982143, pri = 0.0002;
+  const std::vector<Sample> waveform{{1, 2}, {-3, 4}, {5, -6}, {-7, -8}};
+  for (double startup : {-1., 0., 7.25, 55999.75}) for (size_t chunk : {size_t(1), size_t(101), size_t(262144)}) {
+    WindowExtractor windows(3, waveform.size(), pri, rate, 1, false);
+    RxTimeline timeline(desired, rate, windows.samples());
+    double first_time = timeline.commandTime() + startup / rate;
+    auto leading = uint64_t(std::llround(56000 - startup));
+    std::vector<Sample> stream(timeline.requestedSamples(), Sample(0, 0));
+    for (uint64_t pulse = 0; pulse < 3; ++pulse)
+      std::copy(waveform.begin(), waveform.end(), stream.begin() + leading + pulseOffset(pulse, pri, rate, 1));
+    size_t emitted = 0;
+    for (size_t first = 0; !timeline.complete();) {
+      size_t count = size_t(std::min<uint64_t>(chunk, timeline.remaining()));
+      auto slice = timeline.accept(true, first_time + double(first) / rate, count);
+      windows.consume(stream.data() + first + slice.offset, slice.count, [&](const std::vector<Sample>& record) {
+        expect(record == waveform, "Guard trimming preserves every radar sample across RX chunk boundaries");
+        ++emitted;
+      });
+      first += count;
+    }
+    expect(emitted == 3 && windows.extracted() == 3, "Save every requested window and omit leading/trailing guards");
+    expect(timeline.discardedSamples() == leading, "Measure lead-in using the actual hardware timestamp");
+    expect(std::abs((timeline.firstWindowTime() - desired) * rate) <= 0.50001, "Align radar windows to the nearest sample");
+  }
+}
+
+/** Reproduce the 7.25-sample offset from the hardware log without moving the radar window. */
+void testObservedRxStartup() {
+  for (double rate : {1e6, 14e6, 56e6}) {
+    RxTimeline timeline(11.00000020982143, rate, 1232);
+    double first = rate == 56e6 ? 11.000000339285714 - 0.001 : timeline.commandTime() + 7.25 / rate;
+    auto slice = timeline.accept(true, first, 100);
+    expect(slice.count == 0, "A short first chunk can contain only discarded lead-in");
+    expect(std::abs((first - timeline.commandTime()) * rate - 7.25) < 1e-5, "Reproduce measured startup offset");
+    expect(std::abs((timeline.firstWindowTime() - 11.00000020982143) * rate - 0.25) < 1e-5,
+           "Correct the initial offset while retaining only quarter-sample rounding error");
+    expect(std::abs(timeline.expectedTime() - first - 100 / rate) * rate < 1e-5,
+           "Check subsequent timestamps against the actual first sample");
+  }
+}
+
+/** Reject unavailable start samples, missing timestamps and subsequent stream gaps. */
+void testRxTimelineRejection() {
+  const double rate = 56e6;
+  for (double time : {10.998, 11.000001, std::numeric_limits<double>::quiet_NaN()}) {
+    RxTimeline timeline(11, rate, 1232);
+    bool rejected = false;
+    try { timeline.accept(true, time, 100); } catch (const std::runtime_error&) { rejected = true; }
+    expect(rejected && timeline.receivedSamples() == 0, "Reject stale, too-late or invalid first timestamps");
+  }
+  for (bool has_time : {false, true}) for (double gap : {-3., 3., 3661.}) {
+    RxTimeline timeline(11, rate, 1232);
+    double first = timeline.commandTime() + 7.25 / rate;
+    timeline.accept(true, first, 100);
+    bool rejected = false;
+    try { timeline.accept(has_time, first + (100 + gap) / rate, 100); }
+    catch (const std::runtime_error&) { rejected = true; }
+    expect(rejected && timeline.receivedSamples() == 100, "Reject later missing timestamps, gaps and out-of-order data even during lead-in");
+  }
+}
+
 /** Diagnostic only: per-sample complex AWGN SNR, not a hardware sensitivity measurement. */
 void noiseSweep() {
   constexpr size_t trials = 200;
@@ -257,6 +322,9 @@ int main(int argc, char* argv[]) {
     testTrainChunks();
     testIndependentEpochs();
     testPresumming();
+    testGuardedRxWindows();
+    testObservedRxStartup();
+    testRxTimelineRejection();
     std::cout << "Passed " << checks << " checks (one-way sync, lost copies, CRC, PPS mapping, clock drift, IQ windows).\n";
     return 0;
   } catch (const std::exception& error) {
