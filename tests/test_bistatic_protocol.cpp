@@ -160,6 +160,54 @@ void testIndependentEpochs() {
   }
 }
 
+/** Exercise complex averaging through split pulse windows and optional phase removal. */
+void testPresumming() {
+  const double rate = 1e6, pri = 0.0002;
+  const std::vector<Sample> waveform{{1, 2}, {-3, 4}, {5, -6}};
+  for (uint64_t factor : {1, 2, 5}) for (bool dither : {false, true}) {
+    TrainGenerator train(waveform, 10, pri, rate, 1, dither);
+    std::vector<Sample> signal(train.samples());
+    train.fill(signal, 0, signal.size());
+    // Scale each pulse so output verifies the group membership and the normalization.
+    for (uint64_t pulse = 0; pulse < 10; ++pulse)
+      for (size_t i = 0; i < waveform.size(); ++i)
+        signal[pulseOffset(pulse, pri, rate, 1) + i] *= float(pulse + 1);
+    WindowExtractor windows(10, waveform.size(), pri, rate, 1, dither);
+    PulseAverager averages(waveform.size(), factor);
+    for (size_t first = 0; first < signal.size();) {
+      size_t count = std::min(size_t(101), signal.size() - first);
+      windows.consume(signal.data() + first, count, [&](const std::vector<Sample>& record) {
+        averages.consume(record, [&](const std::vector<Sample>& average) {
+          float scale = float(averages.saved() * factor) + float(factor + 1) / 2;
+          for (size_t i = 0; i < waveform.size(); ++i)
+            expect(std::abs(average[i] - waveform[i] * scale) < 1e-4, "Presum complete consecutive windows after phase removal");
+        });
+      });
+      first += count;
+    }
+    expect(windows.extracted() == 10 && averages.saved() == 10 / factor && !averages.buffered(),
+           "Presums reduce output records without changing acquired pulses");
+  }
+  PulseAverager incomplete(1, 3);
+  size_t emitted = 0;
+  auto save = [&](const std::vector<Sample>&) { ++emitted; };
+  incomplete.consume({Sample(1, 2)}, save);
+  incomplete.consume({Sample(3, 4)}, save);
+  expect(emitted == 0 && incomplete.buffered() == 2, "Never write a partial presum group");
+  bool rejected = false;
+  try { PulseAverager invalid(1, 0); } catch (const std::invalid_argument&) { rejected = true; }
+  expect(rejected, "Reject zero presumming factor");
+  rejected = false;
+  try { incomplete.consume({Sample(1, 0), Sample(2, 0)}, save); }
+  catch (const std::invalid_argument&) { rejected = true; }
+  expect(rejected && incomplete.buffered() == 2, "Reject wrong window size without advancing the group");
+  PulseAverager rotating(1, 2);
+  rotating.consume({Sample(1, 0)}, save);
+  rotating.consume({Sample(-1, 0)}, [&](const std::vector<Sample>& average) {
+    expect(average[0] == Sample(0, 0), "Complex presumming preserves phase cancellation rather than averaging magnitudes");
+  });
+}
+
 /** Diagnostic only: per-sample complex AWGN SNR, not a hardware sensitivity measurement. */
 void noiseSweep() {
   constexpr size_t trials = 200;
@@ -208,6 +256,7 @@ int main(int argc, char* argv[]) {
     testModem();
     testTrainChunks();
     testIndependentEpochs();
+    testPresumming();
     std::cout << "Passed " << checks << " checks (one-way sync, lost copies, CRC, PPS mapping, clock drift, IQ windows).\n";
     return 0;
   } catch (const std::exception& error) {

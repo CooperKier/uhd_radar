@@ -129,14 +129,23 @@ void transmitTrain(Radio& radio, PpsClock& clock, const Config& config, double f
 void receiveTrain(Radio& radio, PpsClock& clock, const Config& config, double first_time,
                   double ratio, const fs::path& filename, YAML::Node& metadata) {
   WindowExtractor windows(config.pulses, config.rx_samples, config.pri, config.rate, ratio, config.dither);
+  PulseAverager averages(config.rx_samples, config.presums);
   uint64_t total = windows.samples();
+  // Long trains exceed the B2xx 28-bit finite command count; stop them after total samples on the host.
+  bool continuous = total > 0x0fffffffull;
   std::vector<Sample> buffer(262144);
   std::ofstream destination(filename, std::ios::binary);
   if (!destination) throw std::runtime_error("Cannot create RX IQ file");
-  uhd::stream_cmd_t command(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+  uhd::stream_cmd_t command(continuous ? uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS
+                                     : uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
   command.num_samps = total;
   command.stream_now = false;
   command.time_spec = uhd::time_spec_t(first_time);
+  std::cout << "[RADAR RX] rate_sps=" << config.rate << " wire_format="
+            << config.yaml["DEVICE"]["otw_format"].as<std::string>()
+            << " requested_samples=" << total << " max_packet_samples=" << radio.rx->get_max_num_samps()
+            << " num_presums=" << config.presums << " capture_mode=" << (continuous ? "continuous" : "finite")
+            << " first_time=" << std::to_string(first_time) << std::endl;
   if (radio.device->get_time_now().get_real_secs() + 0.05 >= first_time) throw std::runtime_error("Too late to arm radar RX");
   radio.rx->issue_stream_cmd(command);
   uint64_t received = 0;
@@ -152,18 +161,39 @@ void receiveTrain(Radio& radio, PpsClock& clock, const Config& config, double fi
     if (packet.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) throw std::runtime_error("Radar RX: " + packet.strerror());
     if (!count) continue;
     double expected = first_time + double(received) / config.rate;
-    if (!packet.has_time_spec || std::abs(packet.time_spec.get_real_secs() - expected) > 2 / config.rate)
-      throw std::runtime_error("Discontinuous radar IQ timestamps; refusing a complete output file");
+    if (!packet.has_time_spec || std::abs(packet.time_spec.get_real_secs() - expected) > 2 / config.rate) {
+      auto detail = metadata["timestamp_error"];
+      detail["received_samples"] = received;
+      detail["chunk_samples"] = count;
+      detail["expected_time"] = expected;
+      detail["has_time_spec"] = packet.has_time_spec;
+      std::ostringstream message;
+      message << std::setprecision(17) << "Discontinuous radar IQ timestamps: received_samples=" << received
+              << " chunk_samples=" << count << " expected_time=" << expected;
+      if (packet.has_time_spec) {
+        double delta_samples = (packet.time_spec.get_real_secs() - expected) * config.rate;
+        detail["actual_time"] = packet.time_spec.get_real_secs();
+        detail["delta_samples"] = delta_samples;
+        message << " actual_time=" << packet.time_spec.get_real_secs() << " delta_samples=" << delta_samples;
+      } else message << " missing_timestamp=true";
+      message << "; refusing a complete output file";
+      throw std::runtime_error(message.str());
+    }
     progress_deadline = Steady::now() + std::chrono::seconds(2);
     windows.consume(buffer.data(), count, [&](const std::vector<Sample>& record) {
-      destination.write(reinterpret_cast<const char*>(record.data()), std::streamsize(record.size() * sizeof(Sample)));
-      if (!destination) throw std::runtime_error("RX IQ write failed");
+      averages.consume(record, [&](const std::vector<Sample>& average) {
+        destination.write(reinterpret_cast<const char*>(average.data()), std::streamsize(average.size() * sizeof(Sample)));
+        if (!destination) throw std::runtime_error("RX IQ write failed");
+      });
     });
-    metadata["saved_pulses"] = windows.extracted();
+    metadata["received_pulses"] = windows.extracted();
+    metadata["saved_pulses"] = averages.saved();
     received += count;
   }
+  if (continuous) radio.stopReceive();
   destination.close();
-  if (!destination || windows.extracted() != config.pulses) throw std::runtime_error("Incomplete RX IQ output");
+  if (!destination || windows.extracted() != config.pulses || averages.buffered() ||
+      averages.saved() != config.pulses / config.presums) throw std::runtime_error("Incomplete RX IQ output");
   // Completion requires another physical edge, detecting PPS loss near the end of a train.
   clock.waitEdge(clock.latest().sequence + 1);
   metadata["received_stream_samples"] = received;
@@ -198,6 +228,9 @@ void runCycle(const std::string& role, Radio& radio, PpsClock& clock, const Conf
   report["coherent_phase_lock"] = false;
   report["phase_dithering_removed"] = role == "rx" && config.dither;
   report["saved_pulses"] = 0;
+  report["received_pulses"] = 0;
+  report["num_presums"] = config.presums;
+  report["expected_records"] = config.pulses / config.presums;
   saveYaml(report_path, report);
   saveYaml(prefix.string() + "_config.yaml", config.yaml);
   try {
@@ -228,7 +261,7 @@ void runCycle(const std::string& role, Radio& radio, PpsClock& clock, const Conf
     if (std::abs(final_ratio - ratio) * duration > double(config.rx_samples) / config.rate / 4)
       throw std::runtime_error("Clock rate changed enough to compromise radar window alignment");
     if (role == "rx") {
-      if (fs::file_size(partial) != config.pulses * config.rx_samples * sizeof(Sample)) throw std::runtime_error("Wrong RX IQ file size");
+      if (fs::file_size(partial) != (config.pulses / config.presums) * config.rx_samples * sizeof(Sample)) throw std::runtime_error("Wrong RX IQ file size");
       fs::rename(partial, final);
     }
     report["complete"] = true;
@@ -265,7 +298,10 @@ int main(int argc, char* argv[]) {
       else throw std::invalid_argument("Unknown or incomplete option: " + option);
     }
     Config config(fs::absolute(argv[1]), fs::absolute(argv[2]), role);
-    std::cout << "[CONFIG] " << role << " fingerprint=" << config.fingerprint << " pulses/cycle=" << config.pulses << std::endl;
+    std::cout << "[CONFIG] " << role << " fingerprint=" << config.fingerprint << " pulses/cycle=" << config.pulses
+              << " num_presums=" << config.presums << " records/cycle=" << config.pulses / config.presums << std::endl;
+    if (role == "rx" && config.presums > 1)
+      std::cout << "[PRESUM] Averaging complex IQ without carrier-phase correction; RF phase drift can cancel the return" << std::endl;
     if (validate) return 0;
     fs::path output = fs::absolute(argv[3]);
     if (!fs::is_directory(output)) throw std::invalid_argument("Runner must create a new output directory before launch");

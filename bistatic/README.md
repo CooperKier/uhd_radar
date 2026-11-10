@@ -166,16 +166,24 @@ not oscillator disciplining. Thermal changes, phase noise, calibration error
 and electrical PPS skew still require measurement on hardware.
 
 Carrier-offset measurements are saved; carrier/phase correction is **not**
-applied to saved radar IQ. Consequently this first mode requires
-`CHIRP.num_presums: 1`. Coherent averaging across chirps needs additional phase
-tracking or suitable frequency-reference hardware. The default two-second
-train remains a hardware validation target, not a demonstrated coherence
-interval.
+applied to saved radar IQ. `CHIRP.num_presums` averages that many consecutive
+complex RX windows, after removing optional phase dithering. It must be positive
+and divide `CHIRP.num_pulses` exactly; incomplete groups are never written.
+For example, 10,000 transmitted pulses with `num_presums: 10` produce 1,000
+averaged records. Set it to 1 to save every individual pulse.
+
+Complex averaging can cancel a return when the independent radio oscillators
+rotate its phase between pulses. PPS alone does not prevent that cancellation.
+Larger presums therefore do not guarantee a stronger return; useful coherent
+averaging requires sufficient phase stability or additional phase tracking.
+The code reports this limitation when RX starts with presumming enabled.
+Both Pis must use the same presumming factor and matching updated executables;
+the factor is included in the experiment fingerprint.
 
 Each RX cycle contains these files under the run directory:
 
 ```text
-cycle_000001_rx_samps.bin     interleaved float32 I,Q, one configured RX window/chirp
+cycle_000001_rx_samps.bin     interleaved float32 I,Q, one RX window/averaged group
 cycle_000001_config.yaml     experiment config, compatible with existing readers
 cycle_000001_uhd_stdout.log  legacy-format start log
 cycle_000001_capture.yaml    session/cycle/attempt, PPS, clock and completion metadata
@@ -183,8 +191,11 @@ cycle_000001_capture.yaml    session/cycle/attempt, PPS, clock and completion me
 
 The binary has the same per-record layout used by the original code. The
 sync preambles and zero-valued inter-chirp intervals are not written
-to that file. With the default settings it contains 10,000 records of 1,120
-complex samples, or **89,600,000 bytes**. Incomplete IQ is retained with the
+to that file. With 10,000 pulses, presumming by 10 and 1,120 samples per
+window, it contains 1,000 records, or **8,960,000 bytes**. The capture report's
+`received_pulses` counts individual windows and `saved_pulses` counts averaged
+records; `num_presums` and `expected_records` describe the output layout.
+Incomplete IQ is retained with the
 `.bin.partial` suffix and `complete: false`. TX saves its timing/completion
 report and config. Both roles also save `radio.log` and `run.json`.
 
@@ -198,12 +209,25 @@ slow_time, sample_rate, iq = load_radar_data("data/YOUR_RX_RUN/cycle_000001")
 At 56 MS/s the code continuously streams each approximately two-second
 train and extracts only the configured RX windows. Memory is bounded by
 stream buffers; Pi/USB throughput and disk performance must be measured.
+Presumming reduces disk output, not the USB sample rate or capture duration.
+Trains exceeding the B2xx finite-command limit of 268,435,455 samples use a
+timed continuous command, read exactly the required number of samples, and then
+stop and drain RX. Shorter trains retain the finite command.
 This mode requires fc32 CPU samples, active channel 0, finite positive
-`num_pulses`, `num_presums: 1`, no file splitting and disabled amplifier GPIO.
+`num_pulses`, a positive `num_presums` that divides `num_pulses`, no file
+splitting and disabled amplifier GPIO.
 Each role reads only its active direction's channel/rate/gain/antenna
 settings. `RF0.transmit` must be true on TX; RX can use false and still
 share the same experiment fingerprint. The original combined runner remains
 independent.
+
+If radar capture fails with a discontinuous timestamp, `radio.log` now reports
+the sample count already received, the current chunk size, expected/actual
+device time and the difference in samples (or a missing timestamp). The same
+details are saved under `timestamp_error` in the capture report. A failure at
+`received_samples=0` concerns the start of the capture; a later failure concerns
+continuity within it. The timing check and incomplete-file handling remain
+active with any presumming factor.
 
 ## Validation checklist on Ubuntu / Pi hardware
 

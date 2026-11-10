@@ -111,7 +111,9 @@ class NativeConfigTests(unittest.TestCase):
         self.assertFalse((self.root / "unused").exists())
 
     def test_reject_unsupported_or_unsafe_capture_parameters(self):
-        cases = [("CHIRP", "num_pulses", -1), ("CHIRP", "num_presums", 2),
+        cases = [("CHIRP", "num_pulses", -1), ("CHIRP", "num_presums", 0),
+                 ("CHIRP", "num_presums", -2), ("CHIRP", "num_presums", 3),
+                 ("CHIRP", "num_presums", self.settings["CHIRP"]["num_pulses"] + 1),
                  ("DEVICE", "cpu_format", "sc16"), ("CHIRP", "time_offset", 0),
                  ("CHIRP", "tx_lead", -1), ("GPIO", "pwr_amp_pin", 1),
                  ("FILES", "max_chirps_per_file", 10), ("RF0", "rx_rate", 1e6),
@@ -126,6 +128,7 @@ class NativeConfigTests(unittest.TestCase):
                 self.settings[section][key] = old
 
     def test_fingerprint_changes_with_experiment_not_serial(self):
+        self.settings["CHIRP"]["num_presums"] = 1
         first = self.validate()
         self.settings["DEVICE"]["device_args"] = "type=b200,serial=other-radio"
         second = self.validate()
@@ -134,6 +137,22 @@ class NativeConfigTests(unittest.TestCase):
         fingerprints = [re.search(r"fingerprint=(\d+)", result.stdout).group(1) for result in (first, second, third)]
         self.assertEqual(fingerprints[0], fingerprints[1])
         self.assertNotEqual(fingerprints[0], fingerprints[2])
+
+    def test_presums_match_between_roles_and_change_output_count(self):
+        self.settings["CHIRP"]["num_pulses"] = 100
+        self.settings["CHIRP"]["num_presums"] = 1
+        unaveraged = self.validate()
+        self.settings["CHIRP"]["num_presums"] = 10
+        rx = self.validate()
+        tx = self.validate(role="tx")
+        for result in (unaveraged, rx, tx):
+            self.assertEqual(result.returncode, 0, result.stderr)
+        identity = lambda result: re.search(r"fingerprint=(\d+)", result.stdout).group(1)
+        self.assertEqual(identity(rx), identity(tx))
+        self.assertNotEqual(identity(unaveraged), identity(rx))
+        self.assertIn("records/cycle=100", unaveraged.stdout)
+        self.assertIn("records/cycle=10", rx.stdout)
+        self.assertIn("without carrier-phase correction", rx.stdout)
 
     def test_waveform_wrong_length(self):
         (self.root / "data" / "chirp.bin").write_bytes(b"bad")

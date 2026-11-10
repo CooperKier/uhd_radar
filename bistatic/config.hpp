@@ -17,13 +17,13 @@ inline double positive(const YAML::Node& node, const std::string& name) {
   return value;
 }
 
-/** This first mode deliberately preserves per-chirp fc32 IQ without coherent averaging. */
+/** Preserve fc32 IQ, optionally averaging consecutive, complete pulse windows. */
 struct Config {
   YAML::Node yaml;
   fs::path root;
   double rate, clock_rate, pri, offset, tx_lead, frequency;
   double threshold = 0.85, tolerance = 0.001, max_ppm = 200, control_gain = 0;
-  uint64_t pulses, rx_samples, tx_samples, fingerprint = 14695981039346656037ull;
+  uint64_t pulses, presums, rx_samples, tx_samples, fingerprint = 14695981039346656037ull;
   bool dither;
   std::vector<Sample> chirp;
 
@@ -63,7 +63,10 @@ struct Config {
     if (!std::isfinite(rf[transmitting ? "tx_rate" : "rx_rate"].as<double>()) ||
         std::abs(rf[transmitting ? "tx_rate" : "rx_rate"].as<double>() - rate) > 0.01)
       throw std::invalid_argument("GENERATE and the active RF0 sample rate must agree");
-    if (c["num_presums"].as<int>(1) != 1) throw std::invalid_argument("Set num_presums: 1; coherent averaging needs additional RF phase tracking");
+    auto averaging = c["num_presums"].as<int64_t>(1);
+    if (averaging <= 0 || uint64_t(averaging) > pulses || pulses % uint64_t(averaging))
+      throw std::invalid_argument("CHIRP.num_presums must be positive and divide CHIRP.num_pulses exactly");
+    presums = static_cast<uint64_t>(averaging);
     if (!transmitting && yaml["FILES"]["max_chirps_per_file"].as<int>(-1) != -1)
       throw std::invalid_argument("Set max_chirps_per_file: -1; this mode writes one IQ file per cycle");
     if (yaml["GPIO"]["pwr_amp_pin"].as<int>(-1) != -1 || c["tr_on_lead"].as<double>(0) != 0 || c["tr_off_trail"].as<double>(0) != 0)
@@ -96,7 +99,7 @@ struct Config {
       throw std::invalid_argument("Waveform samples must be finite with amplitude <= 1");
     // Canonical, locale-independent experiment fields; device serial and gains can differ.
     std::vector<uint8_t> identity;
-    for (uint64_t value : {uint64_t(std::llround(rate)), uint64_t(std::llround(clock_rate)), pulses, rx_samples, tx_samples,
+    for (uint64_t value : {uint64_t(std::llround(rate)), uint64_t(std::llround(clock_rate)), pulses, presums, rx_samples, tx_samples,
                            uint64_t(std::llround(pri * 1e12)), uint64_t(std::llround(offset * 1e12)),
                            uint64_t(std::llround(tx_lead * 1e12)), uint64_t(std::llround(frequency)), uint64_t(dither)}) appendInt(identity, value, 8);
     auto hash = [this](uint8_t value) { fingerprint = (fingerprint ^ value) * 1099511628211ull; };

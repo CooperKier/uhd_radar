@@ -5,6 +5,33 @@
 #include <random>
 
 namespace bistatic {
+/** Average complex IQ from consecutive windows after deliberate phase dithering is removed. */
+class PulseAverager {
+  const uint64_t factor;
+  uint64_t pending = 0, records = 0;
+  std::vector<std::complex<double>> sum;
+  std::vector<Sample> average;
+ public:
+  PulseAverager(size_t samples, uint64_t presums) : factor(presums), sum(samples), average(samples) {
+    if (!samples || !factor) throw std::invalid_argument("Presumming needs a nonempty window and a positive factor");
+  }
+
+  uint64_t saved() const { return records; }
+  uint64_t buffered() const { return pending; }
+
+  /** Emit only full groups; retain an incomplete group until more windows arrive. */
+  void consume(const std::vector<Sample>& record, const std::function<void(const std::vector<Sample>&)>& save) {
+    if (record.size() != sum.size()) throw std::invalid_argument("Presumming window size changed");
+    for (size_t i = 0; i < sum.size(); ++i) sum[i] += std::complex<double>(record[i]);
+    if (++pending != factor) return;
+    for (size_t i = 0; i < sum.size(); ++i) average[i] = Sample(sum[i] / double(factor));
+    save(average);
+    std::fill(sum.begin(), sum.end(), std::complex<double>(0, 0));
+    pending = 0;
+    ++records;
+  }
+};
+
 class TrainGenerator {
   const std::vector<Sample>& chirp;
   uint64_t pulses, pulse = 0;
