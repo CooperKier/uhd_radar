@@ -169,3 +169,17 @@ and spacing. Then repeat cycles and test Ctrl-C, missed RF sync and PPS loss.
 The `[SYNC RX]` log reports sample flow, clipping indicators, correlation,
 invalid headers and decoded packets to help distinguish streaming and RF
 problems. A decoded sync packet alone does not prove radar alignment.
+
+Preamble correlation uses the energy across all 62 differential training
+products. Short radar bursts with only a few nonzero products cannot receive
+a near-perfect score. `best_corr` is a candidate score, not proof of sync.
+`bad_headers` counts malformed decoded headers; `protocol_mismatches` counts
+recognized ORCB headers with an unsupported version/type; `crc_failures`
+counts format-valid headers whose packet checksum fails. All are included in
+`invalid_headers`, and buffer overlap can count a candidate more than once.
+`candidate_cfo_hz` and `candidate_header` describe the strongest candidate
+(the eight header bytes are printed in hexadecimal when a preamble is hit).
+A version-2 header starts with `4f5243420201`; no decoded packets means RX
+has not reached fingerprint or PPS-phase validation yet. Compare these
+diagnostics with the TX log and confirm both stations were rebuilt with
+`--prepare` before changing RF or decoder settings.

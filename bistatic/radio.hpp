@@ -10,6 +10,7 @@
 #include <thread>
 #include <uhd/types/tune_request.hpp>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -134,9 +135,17 @@ class Radio {
             << " overflows=" << control_overflows << " timestamp_gaps=" << control_gaps
             << " peak_dbfs=" << 10 * std::log10(std::max(peak_power, 1e-20))
             << " near_fullscale=" << near_fullscale << " best_corr=" << detection_stats.best_score
+            << " candidate_cfo_hz=" << detection_stats.best_carrier_hz
             << " preamble_hits=" << detection_stats.preamble_hits
             << " invalid_headers=" << detection_stats.invalid_headers
+            << " bad_headers=" << detection_stats.bad_headers
+            << " protocol_mismatches=" << detection_stats.protocol_mismatches
+            << " crc_failures=" << detection_stats.crc_failures
             << " decoded=" << detection_stats.decoded_packets;
+    if (detection_stats.preamble_hits) {
+      message << " candidate_header=" << std::hex << std::setfill('0');
+      for (auto byte : detection_stats.best_header) message << std::setw(2) << unsigned(byte);
+    }
     std::cout << message.str() << std::endl;
     detection_stats = {};
     control_samples = control_timeouts = control_overflows = control_gaps = near_fullscale = 0;

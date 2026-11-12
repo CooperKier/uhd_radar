@@ -16,6 +16,7 @@ void expect(bool condition, const std::string& message) {
 void testPackets() {
   Packet announcement{0x123456789abcdef0ull, 2, 7, 0xfedcba9876543210ull, 1};
   auto bytes = encodePacket(announcement);
+  expect(packetStatus(bytes) == PacketStatus::valid, "Classify a complete valid header");
   auto decoded = decodePacket(bytes);
   expect(sameAttempt(decoded, announcement) && decoded.repetition == announcement.repetition, "Packet roundtrip");
   for (size_t bit = 0; bit < bytes.size() * 8; ++bit) {
@@ -31,6 +32,9 @@ void testPackets() {
     unsupported[change.first] = change.second;
     unsupported.resize(40);
     appendInt(unsupported, crc32(unsupported.data(), unsupported.size()), 4);
+    expect(packetStatus(unsupported) == (change.first == 4 || change.first == 5 ?
+           PacketStatus::unsupported_protocol : PacketStatus::bad_header),
+           "Distinguish incompatible protocols from malformed headers");
     bool rejected = false;
     try { decodePacket(unsupported); } catch (const std::invalid_argument&) { rejected = true; }
     expect(rejected, "Reject legacy protocol, removed control types and invalid repetitions even with valid CRC");
@@ -98,12 +102,28 @@ void testModem() {
   expect(!detect(damaged, 0.85, &damaged_stats), "Corrupted RF payload must not pass CRC");
   expect(damaged_stats.invalid_headers > 0 && damaged_stats.decoded_packets == 0,
          "Diagnostics distinguish a received preamble with an invalid payload from a decoded packet");
+  expect(damaged_stats.crc_failures > 0, "Report payload corruption separately from incompatible protocol headers");
+  auto expected_header = encodePacket(packet);
+  expect(std::equal(damaged_stats.best_header.begin(), damaged_stats.best_header.end(), expected_header.begin()),
+         "Keep the strongest decoded header for diagnosing payload failures");
   std::vector<Sample> random_noise(packetSamples() * 3);
   for (auto& sample : random_noise) sample = Sample(noise(generator), noise(generator));
   expect(!detect(random_noise), "Noise must not establish synchronization");
   auto truncated = modulate(packet);
   truncated.resize(truncated.size() - 1);
   expect(!detect(truncated), "Truncated RF header cannot establish synchronization");
+}
+
+/** A short radar burst does not contain the full control preamble. */
+void testShortBurstRejection() {
+  for (float amplitude : {0.01f, 0.35f, 1.f}) for (size_t padding : {size_t(0), size_t(37), size_t(419)}) {
+    std::vector<Sample> samples(packetSamples() + 512, Sample(0, 0));
+    for (size_t i = padding; i < padding + 20; ++i) samples[i] = Sample(amplitude, 0);
+    DetectionStats stats;
+    expect(!detect(samples, 0.85, &stats), "Short RF bursts cannot decode as packets");
+    expect(stats.best_score < 0.85 && !stats.preamble_hits,
+           "A few energetic symbols must not score as a complete preamble");
+  }
 }
 
 void testTrainChunks() {
@@ -335,6 +355,7 @@ int main(int argc, char* argv[]) {
     testPackets();
     testOneWaySync();
     testModem();
+    testShortBurstRejection();
     testTrainChunks();
     testIndependentEpochs();
     testPresumming();

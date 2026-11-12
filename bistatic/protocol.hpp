@@ -25,6 +25,8 @@ struct Packet {
   uint8_t repetition = 0;
 };
 
+enum class PacketStatus { valid, bad_header, unsupported_protocol, bad_crc };
+
 /** CRC detects corrupted control messages; this protocol is not authenticated. */
 inline uint32_t crc32(const uint8_t* bytes, size_t count) {
   uint32_t crc = 0xffffffffu;
@@ -54,18 +56,22 @@ inline std::vector<uint8_t> encodePacket(const Packet& packet) {
   return bytes;
 }
 
+/** Separate packet-format failures from an intact header with corrupt data. */
+inline PacketStatus packetStatus(const std::vector<uint8_t>& bytes) {
+  if (bytes.size() != kPacketBytes || bytes[0] != 'O' || bytes[1] != 'R' ||
+      bytes[2] != 'C' || bytes[3] != 'B') return PacketStatus::bad_header;
+  if (bytes[4] != 2 || bytes[5] != 1) return PacketStatus::unsupported_protocol;
+  if (bytes[6] >= kSyncPhases.size() || bytes[7]) return PacketStatus::bad_header;
+  if (readInt(bytes, 40, 4) != crc32(bytes.data(), 40)) return PacketStatus::bad_crc;
+  if (!readInt(bytes, 8, 8) || !readInt(bytes, 16, 8) || !readInt(bytes, 24, 8)) return PacketStatus::bad_header;
+  return PacketStatus::valid;
+}
+
 /** Version 2 accepts only one-way sync announcements, rejecting the old handshake. */
 inline Packet decodePacket(const std::vector<uint8_t>& bytes) {
-  if (bytes.size() != kPacketBytes || bytes[0] != 'O' || bytes[1] != 'R' ||
-      bytes[2] != 'C' || bytes[3] != 'B' || bytes[4] != 2 || bytes[5] != 1 ||
-      bytes[6] >= kSyncPhases.size() || bytes[7] ||
-      readInt(bytes, 40, 4) != crc32(bytes.data(), 40)) {
-    throw std::invalid_argument("Invalid RF control packet");
-  }
-  Packet result{readInt(bytes, 8, 8), readInt(bytes, 16, 8),
-                readInt(bytes, 24, 8), readInt(bytes, 32, 8), bytes[6]};
-  if (!result.session || !result.cycle || !result.attempt) throw std::invalid_argument("Zero RF transaction identifier");
-  return result;
+  if (packetStatus(bytes) != PacketStatus::valid) throw std::invalid_argument("Invalid RF control packet");
+  return {readInt(bytes, 8, 8), readInt(bytes, 16, 8),
+          readInt(bytes, 24, 8), readInt(bytes, 32, 8), bytes[6]};
 }
 
 inline bool sameAttempt(const Packet& a, const Packet& b) {
@@ -131,8 +137,13 @@ struct Detection {
 /** Decoder work counters; receive-buffer overlap can revisit a candidate. */
 struct DetectionStats {
   double best_score = 0;
+  double best_carrier_hz = 0;
+  std::array<uint8_t, 8> best_header{};
   uint64_t preamble_hits = 0;
   uint64_t invalid_headers = 0;
+  uint64_t bad_headers = 0;
+  uint64_t protocol_mismatches = 0;
+  uint64_t crc_failures = 0;
   uint64_t decoded_packets = 0;
 };
 
@@ -157,12 +168,19 @@ inline std::optional<Detection> detect(const std::vector<Sample>& samples, doubl
       auto product = sums[start + symbol * kSamplesPerSymbol] *
                      std::conj(sums[start + (symbol - 1) * kSamplesPerSymbol]);
       correlation += product * (known[symbol] * known[symbol - 1]);
-      energy += std::abs(product);
+      energy += std::norm(product);
     }
-    double score = energy > 1e-12 ? std::abs(correlation) / energy : 0;
-    if (stats) stats->best_score = std::max(stats->best_score, score);
+    // Normalize over the whole preamble. A sparse burst must not score 1.0
+    // merely because its few nonzero products happen to share a phase.
+    double score = energy > 1e-24 ? std::abs(correlation) / std::sqrt((known.size() - 1) * energy) : 0;
+    bool strongest = stats && score > stats->best_score;
+    if (strongest) {
+      stats->best_score = score;
+      stats->best_carrier_hz = std::arg(correlation) * kControlRate / (2 * kPi * kSamplesPerSymbol);
+    }
     if (score < threshold) continue;
     if (stats) ++stats->preamble_hits;
+    double carrier_hz = std::arg(correlation) * kControlRate / (2 * kPi * kSamplesPerSymbol);
     auto correction = std::polar(1.f, -std::arg(correlation));
     std::vector<uint8_t> bytes(kPacketBytes, 0);
     Sample previous = sums[start + (kPreambleSymbols - 1) * kSamplesPerSymbol];
@@ -171,15 +189,19 @@ inline std::optional<Detection> detect(const std::vector<Sample>& samples, doubl
       if (std::real(current * std::conj(previous) * correction) < 0) bytes[bit / 8] |= uint8_t(1u << (bit % 8));
       previous = current;
     }
-    try {
-      auto packet = decodePacket(bytes);
-      if (stats) ++stats->decoded_packets;
-      return Detection{packet, start,
-                       std::arg(correlation) * kControlRate / (2 * kPi * kSamplesPerSymbol), score};
-    } catch (const std::invalid_argument&) {
-      if (stats) ++stats->invalid_headers;
-      // Continue searching after a false preamble or corrupt header.
+    if (strongest) std::copy_n(bytes.begin(), stats->best_header.size(), stats->best_header.begin());
+    auto status = packetStatus(bytes);
+    if (status != PacketStatus::valid) {
+      if (stats) {
+        ++stats->invalid_headers;
+        if (status == PacketStatus::bad_header) ++stats->bad_headers;
+        else if (status == PacketStatus::unsupported_protocol) ++stats->protocol_mismatches;
+        else if (status == PacketStatus::bad_crc) ++stats->crc_failures;
+      }
+      continue;
     }
+    if (stats) ++stats->decoded_packets;
+    return Detection{decodePacket(bytes), start, carrier_hz, score};
   }
   return std::nullopt;
 }
