@@ -103,7 +103,7 @@ def plot_matched(matched, sample_rate, tx=None, velocity_factor=2/3, loopback=Tr
 
     v = 2/3 * 299792458
     #Change this variable if your cable isn't 50 meters
-    cable_length = 50
+    cable_length = 1.37
     expected_idx = int(cable_length / v * sample_rate + len(tx) - 1)
     print("Expected sample index for", cable_length, "m:", expected_idx)
 
@@ -151,10 +151,10 @@ def main(prefix):
     slowtime, sample_rate, rx = load_data(prefix)
     _, chirp = generate_chirp(processing.load_config(prefix))
     #plot_chirp(chirp, sample_rate)
-    stacked = stack(rx, len(rx)) # initial stack to reduce size of rx 
+    stacked = stack(rx, rx.shape[1]) # Stack the records, not the samples per record
     matched = matched_filter(stacked, chirp)
 
     #Change your coax_length to the length of your cable
-    plot_matched(matched, sample_rate, tx=chirp, velocity_factor=2/3, loopback=True, coax_length=50)
+    plot_matched(matched, sample_rate, tx=chirp, velocity_factor=2/3, loopback=True, coax_length=2.24, zero_sample_idx=153)
     plot_raw_matched(matched, sample_rate, tx=chirp)
     plot_compress(rx, chirp, sample_rate)

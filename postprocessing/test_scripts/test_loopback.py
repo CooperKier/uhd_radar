@@ -1,6 +1,7 @@
 import loopback_testing as lt
 import argparse
 import sys
+from pathlib import Path
 
 sys.path.append('postprocessing')
 import processing as pr
@@ -16,10 +17,8 @@ args = parser.parse_args()
 
 str_arg = str(args.yaml_file)
 print("original string is:", str_arg)
-#This code takes the timestamp from the "data/yyyymmdd_hhmmss_config.yaml" string
-#If your output_dir isn't data/isn't 4 letters long, then edit the two indices below to line up with
-#the timestamp
-timestamp = str_arg[5:20]
+# Extract the capture name without assuming a timestamp or directory length.
+timestamp = Path(str_arg).name.removesuffix("_config.yaml")
 print("timestamp is:", timestamp)
 
 # Initialize Constants
@@ -35,6 +34,7 @@ with open(args.yaml_file) as stream:
    sig_speed = rx_params["sig_speed"]
 
    output_dir = config['FILES'].get('output_dir', 'data') 
+   orig_ch = str(Path(output_dir) / orig_ch) # Chirp filenames are relative to the output directory
    rx_samps = output_dir + "/" + timestamp + "_rx_samps.bin" # Received data to analyze
    prefix = output_dir + "/" + timestamp # Format neccessary for loading data
 
